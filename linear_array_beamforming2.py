@@ -152,15 +152,14 @@ def beamform(data, t, xd, receiveFocus):
             waveform = data[q,r,:]
             scanLine = scanLine + np.concatenate((fillPad, waveform, delayPad))
         image[q,:] = scanLine[maxDelay:]
-    z = t*c0/2
-    return image, z
+    return image
         
 def beamformDF(data, t, xd):
 
     sampleRate = 1/(t[2]-t[1])
     
-    zd = t*c0/2
-    zd2 = zd**2
+    zd = t*c0/2  #note we can actually define this arbitrarily to get a higher resolution. I've refrained from doing this in
+    zd2 = zd**2  #order to have a fair comparison to the non dynamic focusing method.
     propDist = np.zeros((numProbeChan, len(zd)))
     for r in range(numProbeChan):
         dist1 = zd
@@ -181,7 +180,7 @@ def beamformDF(data, t, xd):
             scanLine = scanLine + v[propDistInd[r,:]]  #index waveform at times corresponding to propagation distance to pixel along a-line
         image[q,:] = scanLine
         scanLine = np.zeros(len(zd))
-    return image, zd, propDistInd
+    return image
 
 #def main():
 
@@ -200,48 +199,67 @@ xd = xd - np.max(xd)/2 #transducer locations relative to the a-line, which is al
 # preprocessing - signal filtering, interpolation, and apodization
 dataApod, t2, tgc = preprocUS(sensorData, t, xd) 
         
-# beamforming with dynamic focusing
-imageDF, zDF, propdist = beamformDF(dataApod, t2, xd)
+# beamforming with different receive focii
+rxFocus = 15e-3
+image = beamform(dataApod, t2, xd, rxFocus)
 
 rxFocus = 35e-3
-image, z = beamform(dataApod, t2, xd, rxFocus)
+image2 = beamform(dataApod, t2, xd, rxFocus)
 
-im = imageDF
-Z = zDF
+# beamforming with dynamic focusing
+imageDF = beamformDF(dataApod, t2, xd)
 
-# nullify beginning of image that includes transmission pulse
+images = (image, image2, imageDF)
+z = t2*c0/2
 
-f = np.where(Z < 5e-3)[0]
-ZTrunc = np.delete(Z,f)
-imTrunc = im[:,f[-1]+1:]
-
-# envelope detection
-for n in range(numTxBeams):
-    imTrunc[n,:] = envDet(imTrunc[n,:], 2*ZTrunc/c0 , method = 'hilbert')         #and add contributions across all 32 channels
+#post process all images generated
+imagesProc = []
+for r in range (len(images)):
     
-# apply time-gain compensation
-#a0 = 0.4
-#tgcGain = getTGC(a0, zd, txFreq)
-#for n in range(numTxBeams):
-#    imageDF[n,:] = imageDF[n,:]*tgcGain
-            
-# log compression and scan conversion
+    im = images[r]
+    
+    # nullify beginning of image that includes transmission pulse
 
-imageLog = 20*np.log10(imTrunc/np.max(imTrunc))
+    f = np.where(z < 5e-3)[0]
+    zTrunc = np.delete(z,f)
+    imTrunc = im[:,f[-1]+1:]
+
+    # envelope detection
+    for n in range(numTxBeams):
+        imTrunc[n,:] = envDet(imTrunc[n,:], 2*zTrunc/c0 , method = 'hilbert')         #and add contributions across all 32 channels
+    
+    # log compression and scan conversion
+
+    imageLog = 20*np.log10(imTrunc/np.max(imTrunc))
+    
+    imagesProc.append(np.transpose(imageLog))
+    
 dr = 30
-        
+
 xd2 = np.arange(numTxBeams)*transPitch
 xd2 = xd2 - np.max(xd2)/2
 
 # plotting
 
-fig1 = plt.figure()
-#plt.imshow(np.transpose(imageLog),vmin=-dr, vmax=0, cmap = 'gray', aspect = 'auto')
-plt.imshow(np.transpose(imageLog), extent=[xd2[0]*1e3,xd2[-1]*1e3,ZTrunc[-1]*1e3,ZTrunc[0]*1e3], vmin=-dr, vmax=0, cmap='gray')
-plt.xlabel('x(mm)')
-plt.ylabel('y(mm)')
-plt.colorbar()
+fig, (ax1, ax2, ax3) = plt.subplots(1,3, sharey=True, figsize=(15,5))
+ax1.imshow(imagesProc[0], extent=[xd2[0]*1e3,xd2[-1]*1e3,zTrunc[-1]*1e3,zTrunc[0]*1e3], vmin=-dr, vmax=0, cmap='gray')
+ax1.set_ylabel('Depth(mm)')
+ax1.set_xlabel('x(mm)')
+ax1.set_title('Fixed Receive Focus at 15 mm')
+ax2.imshow(imagesProc[1], extent=[xd2[0]*1e3,xd2[-1]*1e3,zTrunc[-1]*1e3,zTrunc[0]*1e3], vmin=-dr, vmax=0, cmap='gray')
+ax2.set_xlabel('x(mm)')
+ax2.set_title('Fixed Receive Focus at 35 mm')
+ax3.imshow(imagesProc[2], extent=[xd2[0]*1e3,xd2[-1]*1e3,zTrunc[-1]*1e3,zTrunc[0]*1e3], vmin=-dr, vmax=0, cmap='gray')
+ax3.set_xlabel('x(mm)')
+ax3.set_title('Simulated Dynamic Focusing')
 plt.show()
+
+
+
+# plt.xlabel('x(mm)')
+# plt.ylabel('y(mm)')
+# plt.colorbar()
+# plt.show()
 
 
 #if __name__ == '__main__':
