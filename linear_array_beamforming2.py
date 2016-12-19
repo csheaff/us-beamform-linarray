@@ -1,9 +1,9 @@
-
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.io as sio
 from scipy import signal
 
+# global constants
 numTxBeams = 96
 numProbeChan = 32
 txFreq = 1.5e6
@@ -80,11 +80,8 @@ def envDet(scanLine, t, method='hilbert'):
 def preprocUS(data, t, xd):
     sampleRate = 1/(t[1]-t[0])
     samplesPerAcq = data.shape[2]
-    numProbeChan = data.shape[1]
-    numTxBeams = data.shape[0]
-    c0 = 1540
+    
     a0 = 0.4
-    txFreq = 1.5e6
     
     # get time-gain compensation vectors based on estimate for propagation distance to each element
     zd = t*c0/2
@@ -138,36 +135,37 @@ def preprocUS(data, t, xd):
 
 def beamform(data, t, receiveFocus):
     Rf = receiveFocus
-    numRxChan = data.shape[1]
-    chanIndex = np.arange(numRxChan) - numRxChan/2
+    chanIndex = np.arange(numProbeChan) - numProbeChan/2
     fs = 1/(t[1]-t[0])
-    delayInd = np.zeros(numRxChan)
-    for r in range(numRxChan):
-        delay = abs(2*Rf/c0*(1-np.sqrt((chanIndex[r]*transPitch/Rf)**2+1)))
+    delayInd = np.zeros(numProbeChan, dtype=int)
+    for r in range(numProbeChan):
+        delay = 2*Rf/c0*(np.sqrt((chanIndex[r]*transPitch/Rf)**2+1)-1)
         delayInd[r] = int(round(delay*fs))
-
+    #print(delayInd)
     maxDelay = np.max(delayInd)
+    
     waveformLength = data.shape[2]
-    numTx = data.shape[0]
-    image = np.zeros((numTx,waveformLength)) #initialize
-    for q in range(numTx):
+    image = np.zeros((numTxBeams,waveformLength)) #initialize
+    for q in range(numTxBeams):
         scanLine = np.zeros(waveformLength + maxDelay) #initialize
-        for r in range(numRxChan):
+        for r in range(numProbeChan):
             delayPad = np.zeros(delayInd[r])
+            #if (q == 0) and (r == 0):
+            #    print(len(scanLine)-waveformLength-delayInd[r])
             fillPad = np.zeros(len(scanLine)-waveformLength-delayInd[r])
             waveform = data[q,r,:]
-            scanLine = scanLine + np.concatenate((delayPad, waveform, fillPad))
+            scanLine = scanLine + np.concatenate((fillPad, waveform, delayPad))
+            #if q == 1 and (r==0):
+            #    print(waveform[1:100])
+            #    print(scanLine[1:100])
+                
         image[q,:] = scanLine[maxDelay:]
     z = t*c0/2
     return image, z
         
 def beamformDF(data, t, xd):
 
-    numTxBeams = data.shape[0]
-    numProbeChan = data.shape[1]
     sampleRate = 1/(t[2]-t[1])
-    c0 = 1540
-    txFreq = 1.5e6
     
     res = 10e-6
     zd = arange2(2.5e-3, 40e-3, res)
@@ -197,15 +195,10 @@ def beamformDF(data, t, xd):
 sensorData = sio.loadmat('example_us_bmode_sensor_data.mat')['sensor_data'] #[sensorData] = 96x32x1585 -> transmission x recording element x time index
 
 # data get info
-numTxBeams = sensorData.shape[0]
-numProbeChan = sensorData.shape[1]
 samplesPerAcq = sensorData.shape[2]
-transPitch = 2*1.8519e-4
-sampleRate = 27.72e6
+
 toffset = 1.33e-6  #represents the time at which the middle of the transmission pulse occurs. Determined by inspection of signals
 t = np.arange(samplesPerAcq)/sampleRate - toffset
-txFreq = 1.5e6
-c0 = 1540
 
 xd = np.arange(numProbeChan)*transPitch
 xd = xd - np.max(xd)/2 #transducer locations relative to the a-line, which is always centered
@@ -216,13 +209,20 @@ dataApod, t2, tgc = preprocUS(sensorData, t, xd)
 # beamforming with dynamic focusing
 imageDF, zDF = beamformDF(dataApod, t2, xd)
 
-image, z = beamform(dataApod, t2, 20e-3)
+image, z = beamform(dataApod, t2, 15e-3)
 
-im = imageDF
-Z = zDF
+im = image
+Z = z
+
+# nullify beginning of image that includes transmission pulse
+
+f = np.where(Z < 5e-3)[0]
+ZTrunc = np.delete(Z,f)
+imTrunc = im[:,f[-1]+1:]
+
 # envelope detection
 for n in range(numTxBeams):
-    im[n,:] = envDet(im[n,:], 2*Z/c0 , method = 'hilbert')         #and add contributions across all 32 channels
+    imTrunc[n,:] = envDet(imTrunc[n,:], 2*ZTrunc/c0 , method = 'hilbert')         #and add contributions across all 32 channels
     
 # apply time-gain compensation
 #a0 = 0.4
@@ -232,7 +232,7 @@ for n in range(numTxBeams):
             
 # log compression and scan conversion
 
-imageLog = 20*np.log10(im/np.max(im))
+imageLog = 20*np.log10(imTrunc/np.max(imTrunc))
 dr = 30
         
 xd2 = np.arange(numTxBeams)*transPitch
@@ -241,7 +241,8 @@ xd2 = xd2 - np.max(xd2)/2
 # plotting
 
 fig1 = plt.figure()
-plt.imshow(np.transpose(imageLog), extent=[xd2[0]*1e3,xd2[-1]*1e3,Z[-1]*1e3,Z[0]*1e3], vmin=-dr, vmax=0, cmap='gray')
+#plt.imshow(np.transpose(imageLog),vmin=-dr, vmax=0, cmap = 'gray', aspect = 'auto')
+plt.imshow(np.transpose(imageLog), extent=[xd2[0]*1e3,xd2[-1]*1e3,ZTrunc[-1]*1e3,ZTrunc[0]*1e3], vmin=-dr, vmax=0, cmap='gray')
 plt.xlabel('x(mm)')
 plt.ylabel('y(mm)')
 plt.colorbar()
