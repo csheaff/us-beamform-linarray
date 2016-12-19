@@ -109,7 +109,7 @@ def preprocUS(data, t, xd):
     interpFact = 4
     sampleRate = sampleRate*interpFact
     samplesPerAcq2 = samplesPerAcq*interpFact
-    apodWin = signal.tukey(numProbeChan)
+    apodWin = np.ones(numProbeChan) #signal.tukey(numProbeChan)
 
     dataApod = np.zeros((numTxBeams, numProbeChan, samplesPerAcq2))
     for m in range(numTxBeams):
@@ -133,15 +133,13 @@ def preprocUS(data, t, xd):
     return dataApod, t2, tgc
 
 
-def beamform(data, t, receiveFocus):
+def beamform(data, t, xd, receiveFocus):
     Rf = receiveFocus
-    chanIndex = np.arange(numProbeChan) - numProbeChan/2
     fs = 1/(t[1]-t[0])
     delayInd = np.zeros(numProbeChan, dtype=int)
     for r in range(numProbeChan):
-        delay = 2*Rf/c0*(np.sqrt((chanIndex[r]*transPitch/Rf)**2+1)-1)
+        delay = Rf/c0*(np.sqrt((xd[r]/Rf)**2+1)-1)
         delayInd[r] = int(round(delay*fs))
-    #print(delayInd)
     maxDelay = np.max(delayInd)
     
     waveformLength = data.shape[2]
@@ -150,15 +148,9 @@ def beamform(data, t, receiveFocus):
         scanLine = np.zeros(waveformLength + maxDelay) #initialize
         for r in range(numProbeChan):
             delayPad = np.zeros(delayInd[r])
-            #if (q == 0) and (r == 0):
-            #    print(len(scanLine)-waveformLength-delayInd[r])
             fillPad = np.zeros(len(scanLine)-waveformLength-delayInd[r])
             waveform = data[q,r,:]
             scanLine = scanLine + np.concatenate((fillPad, waveform, delayPad))
-            #if q == 1 and (r==0):
-            #    print(waveform[1:100])
-            #    print(scanLine[1:100])
-                
         image[q,:] = scanLine[maxDelay:]
     z = t*c0/2
     return image, z
@@ -167,10 +159,8 @@ def beamformDF(data, t, xd):
 
     sampleRate = 1/(t[2]-t[1])
     
-    res = 10e-6
-    zd = arange2(2.5e-3, 40e-3, res)
+    zd = t*c0/2
     zd2 = zd**2
-   
     propDist = np.zeros((numProbeChan, len(zd)))
     for r in range(numProbeChan):
         dist1 = zd
@@ -179,6 +169,10 @@ def beamformDF(data, t, xd):
     propDistInd = np.round(propDist/c0*sampleRate)
     propDistInd = propDistInd.astype('int')  #acoustic propagation distance from transmission to reception for each element
                                          #these distances stay the same as we slide across the aperture of the full array
+
+    f = np.where(propDistInd >= len(t))  # eliminate indices that are out of bounds
+    propDistInd[f[0],f[1]] = len(t)-1  # replace out-of-bound indices with last index (likely to be of low signal 
+                                       # at that location i.e closest to a null
     scanLine = np.zeros(len(zd))
     image = np.zeros((numTxBeams, len(zd)))
     for q in range(numTxBeams):  #index transmission
@@ -187,7 +181,7 @@ def beamformDF(data, t, xd):
             scanLine = scanLine + v[propDistInd[r,:]]  #index waveform at times corresponding to propagation distance to pixel along a-line
         image[q,:] = scanLine
         scanLine = np.zeros(len(zd))
-    return image, zd
+    return image, zd, propDistInd
 
 #def main():
 
@@ -207,12 +201,13 @@ xd = xd - np.max(xd)/2 #transducer locations relative to the a-line, which is al
 dataApod, t2, tgc = preprocUS(sensorData, t, xd) 
         
 # beamforming with dynamic focusing
-imageDF, zDF = beamformDF(dataApod, t2, xd)
+imageDF, zDF, propdist = beamformDF(dataApod, t2, xd)
 
-image, z = beamform(dataApod, t2, 15e-3)
+rxFocus = 35e-3
+image, z = beamform(dataApod, t2, xd, rxFocus)
 
-im = image
-Z = z
+im = imageDF
+Z = zDF
 
 # nullify beginning of image that includes transmission pulse
 
