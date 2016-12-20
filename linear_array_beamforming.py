@@ -11,7 +11,7 @@ txFocus = 20e-3
 c0 = 1540
 transPitch = 2*1.8519e-4
 sampleRate = 27.72e6
-
+toffset = 1.33e-6  #time at which the middle of the transmission pulse occurs
 
 def arange2(start, stop=None, step=1):
     """#Modified version of numpy.arange which corrects error associated with non-integer step size"""
@@ -42,43 +42,26 @@ def getTGC(alpha0, propDist):
     tgcGain = np.exp(mu*propDist*1e2);  # double zd for round-trip distance, convert to cm
     return tgcGain
 
-def envDet(scanLine, t, method='hilbert'):
-    """Envelope detection. This can be done in a few ways: 
-    (1) Hilbert transform method
-        - doesn't require knowledge of carrier frequency
-        - simple - doesn't require filtering
-        - cannot be implement with analog electronics
-        - edge effects are undesirable
-      
-    (2) Demodulation + Low-pass filtering
-        - implementable with analog electronics
-        - requires knowledge of the carrier frequency, which gets smaller with propagation
-        - more computational steps involved.
-
-    'demod' and 'demod2' do exactly the same thing here. The former is merely the simplest/most intuitive 
-    way to look at the operation (multiplying by complex exponential yields a frequency shift in the fourier domain).
-    Whereas with the latter, the I and Q components are defined, as is typical. 
-    """
-    n = 201
-    fs = 1/(t[1]-t[0])
-    lc = 0.75e6
-    b = signal.firwin(n, lc/(fs/2))  #low-pass filter
-
-    if method == 'hilbert':
-        envelope = np.abs(signal.hilbert(scanLine))
-    elif method == 'demod':
-        demodulated = scanLine*np.exp(-1j*2*np.pi*txFreq*t)
-        demodFilt = np.sqrt(2)*signal.filtfilt(b, 1, demodulated)  #using zero-phase filter to avoid time delay
-        envelope = np.abs(demodFilt)
-    elif method == 'demod2':
-        I = scanLine*np.cos(2*np.pi*txFreq*t)
-        If = np.sqrt(2)*signal.filtfilt(b, 1, I)
-        Q = scanLine*np.sin(2*np.pi*txFreq*t)
-        Qf = np.sqrt(2)*signal.filtfilt(b, 1, Q)
-        envelope = np.sqrt(If**2+Qf**2)        
-    return envelope
-
 def preprocUS(data, t, xd):
+    """After receiving of analog signal data, time-gain compensation is usally applied using an amplifier
+    followed by an anti-aliasing filter (low-pass)  and then A/D conversion. The input data is already digitized, so 
+    no need for anti-alias filtering. Following A/D conversion, one would ideally begin beamforming, however
+    the summing process in beamforming can produce very high values if low frequencies. This can result in the generation
+    of a dynamic range in the data that exceeds what's allowable by the number of bits, thereby yielding 
+    data loss. Therefore it's necessary to high-pass filter before beamforming. In addition, beamforming is 
+    more accurate with a higher sampling rate because the calculated beamforming delays are more accurately 
+    achieved. Hence interpolation is used to upsample the signal. Finally, apodization is applied before the beamformer.
+    
+    This preprocessing function therefore consists of:
+    1) time-gain compensation
+    2) filtering
+    3) interpolation
+    4) apodization 
+    
+    In the filtering step I've appied a band-pass, as higher frequencies are also problematic and are usually
+    addressed after beamforming. 
+    """
+
     sampleRate = 1/(t[1]-t[0])
     samplesPerAcq = data.shape[2]
     
@@ -100,6 +83,7 @@ def preprocUS(data, t, xd):
         dataAmp[m,:,:] = data[m,:,:]*tgc
             
     # retrieve filter coefficients
+    # 
     filtOrd = 201
     lc, hc = 0.5e6, 2.5e6
     lc = lc/(sampleRate/2) #normalize to nyquist frequency
@@ -156,7 +140,20 @@ def beamform(data, t, xd, receiveFocus):
     return image
         
 def beamformDF(data, t, xd):
+    """Ideally we could focus at all depths in receive when beamforming. This is done in an FPGA by using time delays
+    that are time-varying. To clarify, suppose we use the above beamform function to focus at some depth z0. Why not use the delay
+    to achieve this focus merely for the value at that depth? For some depth z0+dz, we would then have a new delay and use it to 
+    generate the pixel only at z0+dz. So an array of time-dependent delay values can be generated for each channel that would allow 
+    focusing at each depth. 
 
+    In order to achieve dynamic focusing offline, digitally, one could find the time-dependent delays and apply them, but this would 
+    require operating a loop over each time value. One could also use the above beamform function for each focal point and only keep
+    the value generated for that depth, but again this would computationally wasteful. An alternative is to fill the a-line first with 
+    values corresponding to the propagation time from emmission to pixel to receiver. One can then simply index the signal 
+    received by an element at the estimtae for propagation time and add that to the pixel, followed by summing contributions from other 
+    channels. Focusing at all depths is effectively acheived, and this is the method applied below.
+
+    """
     sampleRate = 1/(t[2]-t[1])
     
     zd = t*c0/2  #note we can actually define this arbitrarily to get a higher resolution. I've refrained from doing this in
@@ -183,6 +180,47 @@ def beamformDF(data, t, xd):
         scanLine = np.zeros(len(zd))
     return image
 
+def envDet(scanLine, t, method='hilbert'):
+    """Envelope detection. This can be done in a few ways: 
+    (1) Hilbert transform method
+        - doesn't require knowledge of carrier frequency
+        - simple - doesn't require filtering
+        - cannot be implement with analog electronics
+        - edge effects are undesirable
+      
+    (2) Demodulation + Low-pass filtering
+        - implementable with analog electronics
+        - requires knowledge of the carrier frequency, which gets smaller with propagation
+        - more computational steps involved.
+
+    'demod' and 'demod2' do exactly the same thing here. The former is merely the simplest/most intuitive 
+    way to look at the operation (multiplying by complex exponential yields a frequency shift in the fourier domain).
+    Whereas with the latter, the I and Q components are defined, as is typical. 
+    """
+    n = 201
+    fs = 1/(t[1]-t[0])
+    lc = 0.75e6
+    b = signal.firwin(n, lc/(fs/2))  #low-pass filter
+
+    if method == 'hilbert':
+        envelope = np.abs(signal.hilbert(scanLine))
+    elif method == 'demod':
+        demodulated = scanLine*np.exp(-1j*2*np.pi*txFreq*t)
+        demodFilt = np.sqrt(2)*signal.filtfilt(b, 1, demodulated)  #using zero-phase filter to avoid time delay
+        envelope = np.abs(demodFilt)
+    elif method == 'demod2':
+        I = scanLine*np.cos(2*np.pi*txFreq*t)
+        If = np.sqrt(2)*signal.filtfilt(b, 1, I)
+        Q = scanLine*np.sin(2*np.pi*txFreq*t)
+        Qf = np.sqrt(2)*signal.filtfilt(b, 1, Q)
+        envelope = np.sqrt(If**2+Qf**2)        
+    return envelope
+
+def logCompress(data, reject, dynamicRange):
+    xdB = 20*log10(data)
+    mapGS = 255*(xdB - reject)/dynamicRange
+
+
 def main():
 
     # load data from file
@@ -190,8 +228,7 @@ def main():
 
     # data get info
     samplesPerAcq = sensorData.shape[2]
-
-    toffset = 1.33e-6  #represents the time at which the middle of the transmission pulse occurs. Determined by inspection of signals
+    
     t = np.arange(samplesPerAcq)/sampleRate - toffset
 
     xd = np.arange(numProbeChan)*transPitch
@@ -222,7 +259,8 @@ def main():
     
         im = images[r]
     
-        # nullify beginning of image that includes transmission pulse
+        # define portion of image you want to display
+        # this includes nullifying beginning of image that contains the transmission pulse
 
         f = np.where(z < 5e-3)[0]
         zTrunc = np.delete(z,f)
@@ -258,12 +296,11 @@ def main():
     ax3.set_xlabel('x(mm)')
     ax3.set_title('Fixed Receive Focus at 35 mm')
     ax4.imshow(imagesProc[3], extent=[xd2[0]*1e3,xd2[-1]*1e3,zTrunc[-1]*1e3,zTrunc[0]*1e3], vmin=-dr, vmax=0, cmap='gray')
+    ax4.set_xlabel('x(mm)')
     ax4.set_title('Dynamic Focusing')
     plt.show()
 
 # plt.colorbar()
-
-
 
 if __name__ == '__main__':
     main()
