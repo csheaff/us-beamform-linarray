@@ -7,6 +7,7 @@ from scipy import signal
 numTxBeams = 96
 numProbeChan = 32
 txFreq = 1.5e6
+txFocus = 20e-3
 c0 = 1540
 transPitch = 2*1.8519e-4
 sampleRate = 27.72e6
@@ -182,88 +183,90 @@ def beamformDF(data, t, xd):
         scanLine = np.zeros(len(zd))
     return image
 
-#def main():
+def main():
 
-# load data from file
-sensorData = sio.loadmat('example_us_bmode_sensor_data.mat')['sensor_data'] #[sensorData] = 96x32x1585 -> transmission x recording element x time index
+    # load data from file
+    sensorData = sio.loadmat('example_us_bmode_sensor_data.mat')['sensor_data'] #[sensorData] = 96x32x1585 -> transmission x recording element x time index
 
-# data get info
-samplesPerAcq = sensorData.shape[2]
+    # data get info
+    samplesPerAcq = sensorData.shape[2]
 
-toffset = 1.33e-6  #represents the time at which the middle of the transmission pulse occurs. Determined by inspection of signals
-t = np.arange(samplesPerAcq)/sampleRate - toffset
+    toffset = 1.33e-6  #represents the time at which the middle of the transmission pulse occurs. Determined by inspection of signals
+    t = np.arange(samplesPerAcq)/sampleRate - toffset
 
-xd = np.arange(numProbeChan)*transPitch
-xd = xd - np.max(xd)/2 #transducer locations relative to the a-line, which is always centered
+    xd = np.arange(numProbeChan)*transPitch
+    xd = xd - np.max(xd)/2 #transducer locations relative to the a-line, which is always centered
 
-# preprocessing - signal filtering, interpolation, and apodization
-dataApod, t2, tgc = preprocUS(sensorData, t, xd) 
+    # preprocessing - signal filtering, interpolation, and apodization
+    dataApod, t2, tgc = preprocUS(sensorData, t, xd) 
+
+    # simple B-mode image - no beamforming
+    image = dataApod[:,15,:]
+    
+    # beamforming with different receive focii
+    rxFocus = 15e-3
+    imageBF1 = beamform(dataApod, t2, xd, rxFocus)
+
+    rxFocus = 35e-3
+    imageBF2 = beamform(dataApod, t2, xd, rxFocus)
+
+    # beamforming with dynamic focusing
+    imageDF = beamformDF(dataApod, t2, xd)
+    
+    images = (image, imageBF1, imageBF2, imageDF)
+    z = t2*c0/2
+
+    # post process all images generated
+    imagesProc = []
+    for r in range (len(images)):
+    
+        im = images[r]
+    
+        # nullify beginning of image that includes transmission pulse
+
+        f = np.where(z < 5e-3)[0]
+        zTrunc = np.delete(z,f)
+        imTrunc = im[:,f[-1]+1:]
+
+        # envelope detection
+        for n in range(numTxBeams):
+            imTrunc[n,:] = envDet(imTrunc[n,:], 2*zTrunc/c0 , method = 'hilbert')         #and add contributions across all 32 channels
+    
+        # log compression and scan conversion
         
-# beamforming with different receive focii
-rxFocus = 15e-3
-image = beamform(dataApod, t2, xd, rxFocus)
-
-rxFocus = 35e-3
-image2 = beamform(dataApod, t2, xd, rxFocus)
-
-# beamforming with dynamic focusing
-imageDF = beamformDF(dataApod, t2, xd)
-
-images = (image, image2, imageDF)
-z = t2*c0/2
-
-#post process all images generated
-imagesProc = []
-for r in range (len(images)):
+        imageLog = 20*np.log10(imTrunc/np.max(imTrunc))
     
-    im = images[r]
+        imagesProc.append(np.transpose(imageLog))
     
-    # nullify beginning of image that includes transmission pulse
+    dr = 30
 
-    f = np.where(z < 5e-3)[0]
-    zTrunc = np.delete(z,f)
-    imTrunc = im[:,f[-1]+1:]
+    xd2 = np.arange(numTxBeams)*transPitch
+    xd2 = xd2 - np.max(xd2)/2
 
-    # envelope detection
-    for n in range(numTxBeams):
-        imTrunc[n,:] = envDet(imTrunc[n,:], 2*zTrunc/c0 , method = 'hilbert')         #and add contributions across all 32 channels
+    # plotting
+
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2,2, figsize=(10,10))
+    ax1.imshow(imagesProc[0], extent=[xd2[0]*1e3,xd2[-1]*1e3,zTrunc[-1]*1e3,zTrunc[0]*1e3], vmin=-dr, vmax=0, cmap='gray')
+    ax1.set_ylabel('Depth(mm)')
+    ax1.set_xlabel('x(mm)')
+    ax1.set_title('No beamforming')
     
-    # log compression and scan conversion
+    ax2.imshow(imagesProc[1], extent=[xd2[0]*1e3,xd2[-1]*1e3,zTrunc[-1]*1e3,zTrunc[0]*1e3], vmin=-dr, vmax=0, cmap='gray')
+    ax2.set_xlabel('x(mm)')
+    ax2.set_title('Fixed Receive Focus at 15 mm')
+    ax3.imshow(imagesProc[2], extent=[xd2[0]*1e3,xd2[-1]*1e3,zTrunc[-1]*1e3,zTrunc[0]*1e3], vmin=-dr, vmax=0, cmap='gray')
+    ax3.set_xlabel('x(mm)')
+    ax3.set_title('Fixed Receive Focus at 35 mm')
+    ax4.imshow(imagesProc[3], extent=[xd2[0]*1e3,xd2[-1]*1e3,zTrunc[-1]*1e3,zTrunc[0]*1e3], vmin=-dr, vmax=0, cmap='gray')
+    ax4.set_title('Dynamic Focusing')
+    plt.show()
 
-    imageLog = 20*np.log10(imTrunc/np.max(imTrunc))
-    
-    imagesProc.append(np.transpose(imageLog))
-    
-dr = 30
-
-xd2 = np.arange(numTxBeams)*transPitch
-xd2 = xd2 - np.max(xd2)/2
-
-# plotting
-
-fig, (ax1, ax2, ax3) = plt.subplots(1,3, sharey=True, figsize=(15,5))
-ax1.imshow(imagesProc[0], extent=[xd2[0]*1e3,xd2[-1]*1e3,zTrunc[-1]*1e3,zTrunc[0]*1e3], vmin=-dr, vmax=0, cmap='gray')
-ax1.set_ylabel('Depth(mm)')
-ax1.set_xlabel('x(mm)')
-ax1.set_title('Fixed Receive Focus at 15 mm')
-ax2.imshow(imagesProc[1], extent=[xd2[0]*1e3,xd2[-1]*1e3,zTrunc[-1]*1e3,zTrunc[0]*1e3], vmin=-dr, vmax=0, cmap='gray')
-ax2.set_xlabel('x(mm)')
-ax2.set_title('Fixed Receive Focus at 35 mm')
-ax3.imshow(imagesProc[2], extent=[xd2[0]*1e3,xd2[-1]*1e3,zTrunc[-1]*1e3,zTrunc[0]*1e3], vmin=-dr, vmax=0, cmap='gray')
-ax3.set_xlabel('x(mm)')
-ax3.set_title('Simulated Dynamic Focusing')
-plt.show()
-
-
-
-# plt.xlabel('x(mm)')
-# plt.ylabel('y(mm)')
 # plt.colorbar()
-# plt.show()
 
 
-#if __name__ == '__main__':
- #   main()
+
+if __name__ == '__main__':
+    main()
 
 
 
