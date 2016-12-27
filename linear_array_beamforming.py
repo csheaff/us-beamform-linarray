@@ -108,9 +108,8 @@ def preprocUS(data, t, xd):
     # create new time vector based on interpolation and filter delay
     freqs, delay = signal.group_delay((B,1))
     delay = int(delay[0])*interpFact
-    t2 = np.arange(samplesPerAcq2)/sampleRate + t[0]
-    #t2 = np.interp(arange2(0,len(t),1/interpFact), np.arange(len(t)), t)-delay/sampleRate
-
+    t2 = np.arange(samplesPerAcq2)/sampleRate + t[0] - delay/sampleRate
+    
     #remove signal before t = 0
     f = np.where(t2 < 0)[0]
     t2 = np.delete(t2, f)
@@ -235,7 +234,7 @@ def envDet(scanLine, t, method='hilbert'):
         envelope = np.sqrt(If**2+Qf**2)        
     return envelope
 
-def logCompress(data, dynamicRange):
+def logCompress(data, dynamicRange, rejectLevel):
     """Dynamic range is defined as the max value of some data divided by the minimum value, and it is a measure of 
     how spread out the data values are. If the data values have been converted to dB, then dynamic range is defined
     as the max value minus the minimum value. In imaging, the human eye can only detect a certain dynamic range (20 dB?). Furthermore,
@@ -253,26 +252,25 @@ def logCompress(data, dynamicRange):
 
     """
 
+    #compress to dynamic range chosen
     xdB = 20*np.log10(data)
-    reject = 34  #np.max(xdB)-dynamicRange
-    dynamicRange = 51
-    mapGS = (xdB - reject)/dynamicRange
-    mapGS = np.round(mapGS)
-    mapGS[np.where(mapGS < 0)[0]] = 0
-    mapGS = mapGS.astype('int')
+    xdB2 = xdB - np.max(xdB) #shift such that max is 0 dB
+    xdB3 = xdB2 + dynamicRange #shift such that max is dynamicRange value
+    #xdB3[np.where(xdB3 < 0)] = 0 #eliminate data outside of dynamic range
 
-    mx = np.max(data)
-    signal = mx*(np.log10(1+3*data/mx)/np.log10(1 + 3))    #from k-wave "compression factor of 3"
-    signal = 255*np.log10(1+data)/np.log10(1+np.max(data))  #from an old m-file
+    #rejection
+    xdB3[np.where(xdB3 <= rejectLevel)] = 0
 
+    # reject = 34  #np.max(xdB)-dynamicRange
+    # dynamicRange = 51
+    # mapGS = 255*(xdB - reject)/dynamicRange
     
-    #mx = max(signal(:));
-    #signal = mx*(log10(1 + 3*signal./mx)./log10(1 + 3));
+    # mx = np.max(data)
+    # signal = mx*(np.log10(1+3*data/mx)/np.log10(1 + 3))    #from k-wave "compression factor of 3"
 
-    #IM3 = 255/log10(1+IM2_max)*log10(1+IM2);  %logarithmic compression to 8-bit dynamic range (256 values)
+    # signal = 255*np.log10(1+data)/np.log10(1+np.max(data))  #from an old m-file
 
-    
-    return signal
+    return xdB3
 
 def scanConv(data, xb, zb):
     "create 512x512 pixel, 8-bit image from data"
@@ -339,31 +337,35 @@ for r in range(len(images)):
         imTrunc[n,:] = envDet(imTrunc[n,:], 2*zTrunc/c0 , method = 'hilbert')         #and add contributions across all 32 channels
             
     # log compression and scan conversion
-        
-    imageLog = 20*np.log10(imTrunc/np.max(imTrunc))
-
+    DR = 30  # dynamic range - units of dB
+    reject = 0 # rejection level -units of dB (must be less than DR)
+    imageLog = logCompress(imTrunc, DR, reject) #20*np.log10(imTrunc/np.max(imTrunc))
+    
     imageSC, zSC, xSC  = scanConv(imageLog, xd2, zTrunc) 
     
-    imagesProc.append(np.transpose(imageSC))
-        
-dr = 30
-    
+    imageSC2 = np.round(255*imageSC/DR) #convert to 8-bit grayscale
+    imageSC3 = imageSC2.astype('int')
 
+    imagesProc.append(np.transpose(imageSC3))
+        
 # plotting
 
 fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2,2, figsize=(10,10))
-ax1.imshow(imagesProc[0], extent=[xSC[0]*1e3,xSC[-1]*1e3,zSC[-1]*1e3,zSC[0]*1e3], vmin=-dr, vmax=0, cmap='gray')
+
+ax1.imshow(imagesProc[0], extent=[xSC[0]*1e3,xSC[-1]*1e3,zSC[-1]*1e3,zSC[0]*1e3], cmap='gray', interpolation='none')
 ax1.set_ylabel('Depth(mm)')
 ax1.set_xlabel('x(mm)')
 ax1.set_title('No beamforming')
     
-ax2.imshow(imagesProc[1], extent=[xSC[0]*1e3,xSC[-1]*1e3,zSC[-1]*1e3,zSC[0]*1e3], vmin=-dr, vmax=0, cmap='gray')
+ax2.imshow(imagesProc[1], extent=[xSC[0]*1e3,xSC[-1]*1e3,zSC[-1]*1e3,zSC[0]*1e3], cmap='gray',interpolation='none')
 ax2.set_xlabel('x(mm)')
 ax2.set_title('Fixed Receive Focus at 15 mm')
-ax3.imshow(imagesProc[2], extent=[xSC[0]*1e3,xSC[-1]*1e3,zTrunc[-1]*1e3,zSC[0]*1e3], vmin=-dr, vmax=0, cmap='gray')
+
+ax3.imshow(imagesProc[2], extent=[xSC[0]*1e3,xSC[-1]*1e3,zSC[-1]*1e3,zSC[0]*1e3], cmap='gray', interpolation='none')
 ax3.set_xlabel('x(mm)')
 ax3.set_title('Fixed Receive Focus at 35 mm')
-ax4.imshow(imagesProc[3], extent=[xSC[0]*1e3,xSC[-1]*1e3,zSC[-1]*1e3,zSC[0]*1e3], vmin=-dr, vmax=0, cmap='gray')
+
+ax4.imshow(imagesProc[3], extent=[xSC[0]*1e3,xSC[-1]*1e3,zSC[-1]*1e3,zSC[0]*1e3], cmap='gray', interpolation='none')
 ax4.set_xlabel('x(mm)')
 ax4.set_title('Dynamic Focusing')
 plt.show()
