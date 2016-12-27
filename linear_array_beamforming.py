@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy.io as sio
 from scipy import signal
+from scipy.interpolate import interp2d
 
 # global constants
 numTxBeams = 96
@@ -100,31 +101,41 @@ def preprocUS(data, t, xd):
     for m in range(numTxBeams):
         for n in range(numProbeChan):
             w = dataAmp[m,n,:]
-            if np.sum(w) != 0:
-                dataFilt = signal.lfilter(B, 1, w)
-                dataInterp = signal.resample_poly(dataFilt, interpFact, 1)
-                dataApod[m,n,:] = apodWin[n]*dataInterp
+            dataFilt = signal.lfilter(B, 1, w)
+            dataInterp = signal.resample_poly(dataFilt, interpFact, 1)
+            dataApod[m,n,:] = apodWin[n]*dataInterp
 
     # create new time vector based on interpolation and filter delay
     freqs, delay = signal.group_delay((B,1))
     delay = int(delay[0])*interpFact
-    t2 = np.interp(arange2(0,len(t),1/interpFact), np.arange(len(t)), t)-delay/sampleRate
+    t2 = np.arange(samplesPerAcq2)/sampleRate + t[0]
+    #t2 = np.interp(arange2(0,len(t),1/interpFact), np.arange(len(t)), t)-delay/sampleRate
 
-    # remove signal before t = 0
+    #remove signal before t = 0
     f = np.where(t2 < 0)[0]
     t2 = np.delete(t2, f)
     dataApod = dataApod[:,:,f[-1]+1:]
 
-    return dataApod, t2, tgc
+    return dataApod, t2
 
 
 def beamform(data, t, xd, receiveFocus):
+    """This employs the classic delay-and-sum method of beamforming entailing a single focus location
+    defined by receiveFocus [m]. 
+    inputs: 
+            data - RF data, dimenions of (transmission number, receive channel, time index)
+            t - time vector associated with RF waveforms, [t] = seconds
+            xd - horizontal position vector of receive channels relative to center, [xd] = meters
+            receiveFocus - depth of focus for beamforming, [receiveFocus] = meters
+    outputs: 
+            image - beamformed data, dimensions of (scanline index, depth)
+    """
     Rf = receiveFocus
     fs = 1/(t[1]-t[0])
     delayInd = np.zeros(numProbeChan, dtype=int)
     for r in range(numProbeChan):
-        delay = Rf/c0*(np.sqrt((xd[r]/Rf)**2+1)-1)
-        delayInd[r] = int(round(delay*fs))
+        delay = Rf/c0*(np.sqrt((xd[r]/Rf)**2+1)-1)   #represents difference between propagation time for a central element
+        delayInd[r] = int(round(delay*fs))           #and prop time for a off-centered element
     maxDelay = np.max(delayInd)
     
     waveformLength = data.shape[2]
@@ -152,8 +163,16 @@ def beamformDF(data, t, xd):
     values corresponding to the propagation time from emmission to pixel to receiver. One can then simply index the signal 
     received by an element at the estimtae for propagation time and add that to the pixel, followed by summing contributions from other 
     channels. Focusing at all depths is effectively acheived, and this is the method applied below.
+    
+    inputs: 
+            data - RF data, dimenions of (transmission number, receive channel, time index)
+            t - time vector associated with RF waveforms, [t] = seconds
+            xd - horizontal position vector of receive channels relative to center, [xd] = meters
+            
+    outputs: 
+            image - beamformed data, dimensions of (scanline index, depth)
 
-    """
+"""
     sampleRate = 1/(t[2]-t[1])
     
     zd = t*c0/2  #note we can actually define this arbitrarily to get a higher resolution. I've refrained from doing this in
@@ -216,95 +235,143 @@ def envDet(scanLine, t, method='hilbert'):
         envelope = np.sqrt(If**2+Qf**2)        
     return envelope
 
-def logCompress(data, reject, dynamicRange):
-    xdB = 20*log10(data)
-    mapGS = 255*(xdB - reject)/dynamicRange
-
-
-def main():
-
-    # load data from file
-    sensorData = sio.loadmat('example_us_bmode_sensor_data.mat')['sensor_data'] #[sensorData] = 96x32x1585 -> transmission x recording element x time index
-
-    # data get info
-    samplesPerAcq = sensorData.shape[2]
+def logCompress(data, dynamicRange):
+    """Dynamic range is defined as the max value of some data divided by the minimum value, and it is a measure of 
+    how spread out the data values are. If the data values have been converted to dB, then dynamic range is defined
+    as the max value minus the minimum value. In imaging, the human eye can only detect a certain dynamic range (20 dB?). Furthermore,
+    the dynamic range of a display is limited to around 30 dB typically. Therefore it is common to compress the data to 
+    range of 30 dB and then map to 255 different values for grayscale. 
     
-    t = np.arange(samplesPerAcq)/sampleRate - toffset
+    stages of dynamic range modification
+    1) log compression, of which there are different types
+    2) conversion to 8-bit values -> linear transformation to 48 dB dynamic range
 
-    xd = np.arange(numProbeChan)*transPitch
-    xd = xd - np.max(xd)/2 #transducer locations relative to the a-line, which is always centered
+    In ultrasound equipment, a logarithmic amplifier is used which can be modeled as
+    output = c0*ln(input)+c1 where c0 and c1 are compression factors
+    The units of a natural logarithm are Np (Nepers) not, dB. One can get dB by merely dividing
+    by a factor of 8.7, which i suspect is done in software.
 
-    # preprocessing - signal filtering, interpolation, and apodization
-    dataApod, t2, tgc = preprocUS(sensorData, t, xd) 
+    """
 
-    # simple B-mode image - no beamforming
-    image = dataApod[:,15,:]
+    xdB = 20*np.log10(data)
+    reject = 34  #np.max(xdB)-dynamicRange
+    dynamicRange = 51
+    mapGS = (xdB - reject)/dynamicRange
+    mapGS = np.round(mapGS)
+    mapGS[np.where(mapGS < 0)[0]] = 0
+    mapGS = mapGS.astype('int')
+
+    mx = np.max(data)
+    signal = mx*(np.log10(1+3*data/mx)/np.log10(1 + 3))    #from k-wave "compression factor of 3"
+    signal = 255*np.log10(1+data)/np.log10(1+np.max(data))  #from an old m-file
+
     
-    # beamforming with different receive focii
-    rxFocus = 15e-3
-    imageBF1 = beamform(dataApod, t2, xd, rxFocus)
+    #mx = max(signal(:));
+    #signal = mx*(log10(1 + 3*signal./mx)./log10(1 + 3));
 
-    rxFocus = 35e-3
-    imageBF2 = beamform(dataApod, t2, xd, rxFocus)
+    #IM3 = 255/log10(1+IM2_max)*log10(1+IM2);  %logarithmic compression to 8-bit dynamic range (256 values)
 
-    # beamforming with dynamic focusing
-    imageDF = beamformDF(dataApod, t2, xd)
     
-    images = (image, imageBF1, imageBF2, imageDF)
-    z = t2*c0/2
+    return signal
 
-    # post process all images generated
-    imagesProc = []
-    for r in range (len(images)):
-    
-        im = images[r]
-    
-        # define portion of image you want to display
-        # this includes nullifying beginning of image that contains the transmission pulse
+def scanConv(data, xb, zb):
+    "create 512x512 pixel, 8-bit image from data"
 
-        f = np.where(z < 5e-3)[0]
-        zTrunc = np.delete(z,f)
-        imTrunc = im[:,f[-1]+1:]
+    interpFunc = interp2d(zb, xb, data, kind='linear')
+    xnew = np.linspace(np.min(xb),np.max(xb), 512)
+    znew = np.linspace(np.min(zb),np.max(zb), 512)
+    imageSC = interpFunc(znew, xnew)
 
-        # envelope detection
-        for n in range(numTxBeams):
-            imTrunc[n,:] = envDet(imTrunc[n,:], 2*zTrunc/c0 , method = 'hilbert')         #and add contributions across all 32 channels
+    return imageSC, znew, xnew
     
-        # log compression and scan conversion
+#def main():
+
+# load data from file
+sensorData = sio.loadmat('example_us_bmode_sensor_data.mat')['sensor_data'] #[sensorData] = 96x32x1585 -> transmission x recording element x time index
+
+# data get info
+samplesPerAcq = sensorData.shape[2]
+
+t = np.arange(samplesPerAcq)/sampleRate - toffset
+
+xd = np.arange(numProbeChan)*transPitch
+xd = xd - np.max(xd)/2 #transducer locations relative to the a-line, which is always centered
+
+# preprocessing - signal filtering, interpolation, and apodization
+dataApod, t2 = preprocUS(sensorData, t, xd) 
+
+# simple B-mode image - no beamforming
+image = dataApod[:,15,:]
+    
+# beamforming with different receive focii
+rxFocus = 15e-3
+imageBF1 = beamform(dataApod, t2, xd, rxFocus)
+    
+print(np.max(imageBF1), np.min(imageBF1))
+    
+rxFocus = 35e-3
+imageBF2 = beamform(dataApod, t2, xd, rxFocus)
+
+# beamforming with dynamic focusing
+imageDF = beamformDF(dataApod, t2, xd)
+    
+images = (image, imageBF1, imageBF2, imageDF)
+z = t2*c0/2
+
+xd2 = np.arange(numTxBeams)*transPitch
+xd2 = xd2 - np.max(xd2)/2
+
+# post process all images generated
+imagesProc = []
+for r in range(len(images)):
         
-        imageLog = 20*np.log10(imTrunc/np.max(imTrunc))
+    im = images[r]
+        
+    # define portion of image you want to display
+    # this includes nullifying beginning of image that contains the transmission pulse
     
-        imagesProc.append(np.transpose(imageLog))
+    f = np.where(z < 5e-3)[0]
+    zTrunc = np.delete(z,f)
+    imTrunc = im[:,f[-1]+1:]
+
+    # envelope detection
+    for n in range(numTxBeams):
+        imTrunc[n,:] = envDet(imTrunc[n,:], 2*zTrunc/c0 , method = 'hilbert')         #and add contributions across all 32 channels
+            
+    # log compression and scan conversion
+        
+    imageLog = 20*np.log10(imTrunc/np.max(imTrunc))
+
+    imageSC, zSC, xSC  = scanConv(imageLog, xd2, zTrunc) 
     
-    dr = 30
-
-    xd2 = np.arange(numTxBeams)*transPitch
-    xd2 = xd2 - np.max(xd2)/2
-
-    # plotting
-
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2,2, figsize=(10,10))
-    ax1.imshow(imagesProc[0], extent=[xd2[0]*1e3,xd2[-1]*1e3,zTrunc[-1]*1e3,zTrunc[0]*1e3], vmin=-dr, vmax=0, cmap='gray')
-    ax1.set_ylabel('Depth(mm)')
-    ax1.set_xlabel('x(mm)')
-    ax1.set_title('No beamforming')
+    imagesProc.append(np.transpose(imageSC))
+        
+dr = 30
     
-    ax2.imshow(imagesProc[1], extent=[xd2[0]*1e3,xd2[-1]*1e3,zTrunc[-1]*1e3,zTrunc[0]*1e3], vmin=-dr, vmax=0, cmap='gray')
-    ax2.set_xlabel('x(mm)')
-    ax2.set_title('Fixed Receive Focus at 15 mm')
-    ax3.imshow(imagesProc[2], extent=[xd2[0]*1e3,xd2[-1]*1e3,zTrunc[-1]*1e3,zTrunc[0]*1e3], vmin=-dr, vmax=0, cmap='gray')
-    ax3.set_xlabel('x(mm)')
-    ax3.set_title('Fixed Receive Focus at 35 mm')
-    ax4.imshow(imagesProc[3], extent=[xd2[0]*1e3,xd2[-1]*1e3,zTrunc[-1]*1e3,zTrunc[0]*1e3], vmin=-dr, vmax=0, cmap='gray')
-    ax4.set_xlabel('x(mm)')
-    ax4.set_title('Dynamic Focusing')
-    plt.show()
+
+# plotting
+
+fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2,2, figsize=(10,10))
+ax1.imshow(imagesProc[0], extent=[xSC[0]*1e3,xSC[-1]*1e3,zSC[-1]*1e3,zSC[0]*1e3], vmin=-dr, vmax=0, cmap='gray')
+ax1.set_ylabel('Depth(mm)')
+ax1.set_xlabel('x(mm)')
+ax1.set_title('No beamforming')
+    
+ax2.imshow(imagesProc[1], extent=[xSC[0]*1e3,xSC[-1]*1e3,zSC[-1]*1e3,zSC[0]*1e3], vmin=-dr, vmax=0, cmap='gray')
+ax2.set_xlabel('x(mm)')
+ax2.set_title('Fixed Receive Focus at 15 mm')
+ax3.imshow(imagesProc[2], extent=[xSC[0]*1e3,xSC[-1]*1e3,zTrunc[-1]*1e3,zSC[0]*1e3], vmin=-dr, vmax=0, cmap='gray')
+ax3.set_xlabel('x(mm)')
+ax3.set_title('Fixed Receive Focus at 35 mm')
+ax4.imshow(imagesProc[3], extent=[xSC[0]*1e3,xSC[-1]*1e3,zSC[-1]*1e3,zSC[0]*1e3], vmin=-dr, vmax=0, cmap='gray')
+ax4.set_xlabel('x(mm)')
+ax4.set_title('Dynamic Focusing')
+plt.show()
 
 # plt.colorbar()
 
-if __name__ == '__main__':
-    main()
-
+#if __name__ == '__main__':
+#main()
 
 
 
