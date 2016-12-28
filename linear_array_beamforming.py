@@ -237,38 +237,23 @@ def envDet(scanLine, t, method='hilbert'):
 def logCompress(data, dynamicRange, rejectLevel):
     """Dynamic range is defined as the max value of some data divided by the minimum value, and it is a measure of 
     how spread out the data values are. If the data values have been converted to dB, then dynamic range is defined
-    as the max value minus the minimum value. In imaging, the human eye can only detect a certain dynamic range (20 dB?). Furthermore,
-    the dynamic range of a display is limited to around 30 dB typically. Therefore it is common to compress the data to 
-    range of 30 dB and then map to 255 different values for grayscale. 
-    
-    stages of dynamic range modification
-    1) log compression, of which there are different types
-    2) conversion to 8-bit values -> linear transformation to 48 dB dynamic range
+    as the max value minus the minimum value. 
 
-    In ultrasound equipment, a logarithmic amplifier is used which can be modeled as
-    output = c0*ln(input)+c1 where c0 and c1 are compression factors
-    The units of a natural logarithm are Np (Nepers) not, dB. One can get dB by merely dividing
-    by a factor of 8.7, which i suspect is done in software.
+    One could interpret there being two stages of compression in the standard log compression process. The first is 
+    the simple conversion to dB. The second is in selecting to display a certain range of dB. 
 
+    inputs:
+            
     """
 
     #compress to dynamic range chosen
-    xdB = 20*np.log10(data)
+    xdB = 20*np.log10(1+data) #add one b/c log10(0) = -inf ('data' should have values >= 0)
     xdB2 = xdB - np.max(xdB) #shift such that max is 0 dB
     xdB3 = xdB2 + dynamicRange #shift such that max is dynamicRange value
-    #xdB3[np.where(xdB3 < 0)] = 0 #eliminate data outside of dynamic range
+    xdB3[np.where(xdB3 < 0)] = 0 #eliminate data outside of dynamic range
 
     #rejection
     xdB3[np.where(xdB3 <= rejectLevel)] = 0
-
-    # reject = 34  #np.max(xdB)-dynamicRange
-    # dynamicRange = 51
-    # mapGS = 255*(xdB - reject)/dynamicRange
-    
-    # mx = np.max(data)
-    # signal = mx*(np.log10(1+3*data/mx)/np.log10(1 + 3))    #from k-wave "compression factor of 3"
-
-    # signal = 255*np.log10(1+data)/np.log10(1+np.max(data))  #from an old m-file
 
     return xdB3
 
@@ -282,98 +267,99 @@ def scanConv(data, xb, zb):
 
     return imageSC, znew, xnew
     
-#def main():
+def main():
 
-# load data from file
-sensorData = sio.loadmat('example_us_bmode_sensor_data.mat')['sensor_data'] #[sensorData] = 96x32x1585 -> transmission x recording element x time index
+    # load data from file
+    sensorData = sio.loadmat('example_us_bmode_sensor_data.mat')['sensor_data'] #[sensorData] = 96x32x1585 -> transmission x recording element x time index
 
-# data get info
-samplesPerAcq = sensorData.shape[2]
+    # data get info
+    samplesPerAcq = sensorData.shape[2]
 
-t = np.arange(samplesPerAcq)/sampleRate - toffset
+    t = np.arange(samplesPerAcq)/sampleRate - toffset
 
-xd = np.arange(numProbeChan)*transPitch
-xd = xd - np.max(xd)/2 #transducer locations relative to the a-line, which is always centered
+    xd = np.arange(numProbeChan)*transPitch
+    xd = xd - np.max(xd)/2 #transducer locations relative to the a-line, which is always centered
 
-# preprocessing - signal filtering, interpolation, and apodization
-dataApod, t2 = preprocUS(sensorData, t, xd) 
+    # preprocessing - signal filtering, interpolation, and apodization
+    dataApod, t2 = preprocUS(sensorData, t, xd) 
 
-# simple B-mode image - no beamforming
-image = dataApod[:,15,:]
+    # simple B-mode image - no beamforming (only use waveform from a central array element)
+    image = dataApod[:,15,:]  
     
-# beamforming with different receive focii
-rxFocus = 15e-3
-imageBF1 = beamform(dataApod, t2, xd, rxFocus)
+    # beamforming with different receive focii
+    rxFocus = 15e-3
+    imageBF1 = beamform(dataApod, t2, xd, rxFocus)
     
-print(np.max(imageBF1), np.min(imageBF1))
+    rxFocus = 35e-3
+    imageBF2 = beamform(dataApod, t2, xd, rxFocus)
+
+    # beamforming with dynamic focusing
+    imageDF = beamformDF(dataApod, t2, xd)
     
-rxFocus = 35e-3
-imageBF2 = beamform(dataApod, t2, xd, rxFocus)
+    images = (image, imageBF1, imageBF2, imageDF)
+    z = t2*c0/2
 
-# beamforming with dynamic focusing
-imageDF = beamformDF(dataApod, t2, xd)
-    
-images = (image, imageBF1, imageBF2, imageDF)
-z = t2*c0/2
+    xd2 = np.arange(numTxBeams)*transPitch
+    xd2 = xd2 - np.max(xd2)/2
 
-xd2 = np.arange(numTxBeams)*transPitch
-xd2 = xd2 - np.max(xd2)/2
-
-# post process all images generated
-imagesProc = []
-for r in range(len(images)):
+    # post process all images generated
+    imagesProc = []
+    for r in range(len(images)):
         
-    im = images[r]
+        im = images[r]
         
-    # define portion of image you want to display
-    # this includes nullifying beginning of image that contains the transmission pulse
+        # define portion of image you want to display
+        # this includes nullifying beginning of image that contains the transmission pulse
     
-    f = np.where(z < 5e-3)[0]
-    zTrunc = np.delete(z,f)
-    imTrunc = im[:,f[-1]+1:]
+        f = np.where(z < 5e-3)[0]
+        zTrunc = np.delete(z,f)
+        imTrunc = im[:,f[-1]+1:]
 
-    # envelope detection
-    for n in range(numTxBeams):
-        imTrunc[n,:] = envDet(imTrunc[n,:], 2*zTrunc/c0 , method = 'hilbert')         #and add contributions across all 32 channels
+        # envelope detection
+        for n in range(numTxBeams):
+            imTrunc[n,:] = envDet(imTrunc[n,:], 2*zTrunc/c0 , method = 'hilbert')         #and add contributions across all 32 channels
             
-    # log compression and scan conversion
-    DR = 30  # dynamic range - units of dB
-    reject = 0 # rejection level -units of dB (must be less than DR)
-    imageLog = logCompress(imTrunc, DR, reject) #20*np.log10(imTrunc/np.max(imTrunc))
+        # log compression and scan conversion
+        DR = 30  # dynamic range - units of dB
+        reject = 0 # rejection level -units of dB (must be less than DR)
+        imageLog = logCompress(imTrunc, DR, reject) 
     
-    imageSC, zSC, xSC  = scanConv(imageLog, xd2, zTrunc) 
+        imageSC, zSC, xSC  = scanConv(imageLog, xd2, zTrunc) #convert to 512x512 image
     
-    imageSC2 = np.round(255*imageSC/DR) #convert to 8-bit grayscale
-    imageSC3 = imageSC2.astype('int')
+        imageSC2 = np.round(255*imageSC/DR) #convert to 8-bit grayscale
+        imageSC3 = imageSC2.astype('int')
 
-    imagesProc.append(np.transpose(imageSC3))
+        imagesProc.append(np.transpose(imageSC3))
         
-# plotting
+    # plotting
 
-fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2,2, figsize=(10,10))
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2,2, figsize=(10,10))
 
-ax1.imshow(imagesProc[0], extent=[xSC[0]*1e3,xSC[-1]*1e3,zSC[-1]*1e3,zSC[0]*1e3], cmap='gray', interpolation='none')
-ax1.set_ylabel('Depth(mm)')
-ax1.set_xlabel('x(mm)')
-ax1.set_title('No beamforming')
+    ax1.imshow(imagesProc[0], extent=[xSC[0]*1e3,xSC[-1]*1e3,zSC[-1]*1e3,zSC[0]*1e3], cmap='gray', interpolation='none')
+    ax1.set_ylabel('Depth(mm)')
+    ax1.set_xlabel('x(mm)')
+    ax1.set_title('No beamforming')
     
-ax2.imshow(imagesProc[1], extent=[xSC[0]*1e3,xSC[-1]*1e3,zSC[-1]*1e3,zSC[0]*1e3], cmap='gray',interpolation='none')
-ax2.set_xlabel('x(mm)')
-ax2.set_title('Fixed Receive Focus at 15 mm')
+    ax2.imshow(imagesProc[1], extent=[xSC[0]*1e3,xSC[-1]*1e3,zSC[-1]*1e3,zSC[0]*1e3], cmap='gray',interpolation='none')
+    ax2.set_ylabel('Depth(mm)')
+    ax2.set_xlabel('x(mm)')
+    ax2.set_title('Fixed Receive Focus at 15 mm')
 
-ax3.imshow(imagesProc[2], extent=[xSC[0]*1e3,xSC[-1]*1e3,zSC[-1]*1e3,zSC[0]*1e3], cmap='gray', interpolation='none')
-ax3.set_xlabel('x(mm)')
-ax3.set_title('Fixed Receive Focus at 35 mm')
+    ax3.imshow(imagesProc[2], extent=[xSC[0]*1e3,xSC[-1]*1e3,zSC[-1]*1e3,zSC[0]*1e3], cmap='gray', interpolation='none')
+    ax3.set_ylabel('Depth(mm)')
+    ax3.set_xlabel('x(mm)')
+    ax3.set_title('Fixed Receive Focus at 35 mm')
 
-ax4.imshow(imagesProc[3], extent=[xSC[0]*1e3,xSC[-1]*1e3,zSC[-1]*1e3,zSC[0]*1e3], cmap='gray', interpolation='none')
-ax4.set_xlabel('x(mm)')
-ax4.set_title('Dynamic Focusing')
-plt.show()
+    ax4.imshow(imagesProc[3], extent=[xSC[0]*1e3,xSC[-1]*1e3,zSC[-1]*1e3,zSC[0]*1e3], cmap='gray', interpolation='none')
+    ax4.set_ylabel('Depth(mm)')
+    ax4.set_xlabel('x(mm)')
+    ax4.set_title('Dynamic Focusing')
+    plt.show()
 
 # plt.colorbar()
 
-#if __name__ == '__main__':
-#main()
+if __name__ == '__main__':
+    main()
 
 
 
