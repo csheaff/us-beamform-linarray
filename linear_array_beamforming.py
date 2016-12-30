@@ -26,21 +26,25 @@ def arange2(start, stop=None, step=1):
 
 def getTGC(alpha0, propDist):
     """ Time-gain compensation
-    Model for amplitude reduction with distance -> A(z) = A(0)*exp(-mu*z)
-    It's convenient to think of A(z)/A(0) in dB, i.e. 20*log10(A(z)/A(0))
-    which happens to = 20*log10(exp(-mu*z)) = 20*log10(e)*(-mu*z) ~ -8.7*mu*z
-    As the attentuation coefficient, it's common to specify the quantity 8.7*mu and call it alpha
-    Because attentuation is frequency-dependent, alpha is additionally expressed as alpha = alpha0*f^n (f = freq, 1<n<2)
-    and the value alpha0 is usually given for a tissue type in units of dB/(MHz-cm).
-    Therefore, A(z)/A(0) = exp(-mu*z) = exp(-alpha/8.7*z) = exp(-alpha0*f^n/8.7*z)
-    To compensate for attentuation, we can therefore multiple by exp(alpha0*f^n/8.7*z).
-    However, users will usually customize TGC settings using external controls, as they tend to like
-    their levels at particular settings which aid their diagnosis."""
-    #alpha0 = 0.4;   # [a0] = dB/(MHz-cm),  0.54 is average for soft tissue
-    n = 1;  # approx. 1 for soft tissue
+    The attenuation coefficient of tissue is usually expressed in dB and defined as
+    alphaDB = 20/x*log10[p(0)/p(x)]
+    where x is the propagation distance, p(0) is the incident pressure, p(x) is the spatially variant pressure
+    As a result,  p(x)/p(0) = 10^(-alphadB*x/20)
+
+    Alpha is actually frequency dependent and modeled as alphaDB = alpha0*f^n, where f is frequency and 0 < n < 1
+    For tissue, n ~ 1. alpha0 is usually the parameter specified in units of dB/(MHz-cm). We can compensate
+    therefore by multiplying each A-line by 10^(alpha0*f*propDist*100/20). Note that this does not take into
+    account the dissipation of acoustic energy with distance due to non-plane wave propagation.
+
+    inputs:  alpha0 - attenutation coefficient in dB/(MHz-cm)
+             propDist - round-trip propagation distance of acoustic pulse in meters
+
+    outputs: tgcGain - gain vector for multiplication with A-line """
+
+    n = 1  # approx. 1 for soft tissue
     alpha = alpha0*(txFreq*1e-6)**n;  
-    mu = alpha/8.7 # convert out of dB units
-    tgcGain = np.exp(mu*propDist*1e2);  # double zd for round-trip distance, convert to cm
+    tgcGain = 10**(alpha*propDist*100/20)
+
     return tgcGain
 
 def preprocUS(data, t, xd):
@@ -91,7 +95,7 @@ def preprocUS(data, t, xd):
     hc = hc/(sampleRate/2)
     B = signal.firwin(filtOrd, [lc, hc], pass_zero=False) #band-pass filter
 
-    # specify interpolation factor, get apodizatin window
+    # specify interpolation factor, get apodization window
     interpFact = 4
     sampleRate = sampleRate*interpFact
     samplesPerAcq2 = samplesPerAcq*interpFact
@@ -234,7 +238,7 @@ def envDet(scanLine, t, method='hilbert'):
         envelope = np.sqrt(If**2+Qf**2)        
     return envelope
 
-def logCompress(data, dynamicRange, rejectLevel):
+def logCompress(data, dynamicRange, rejectLevel, brightGain):
     """Dynamic range is defined as the max value of some data divided by the minimum value, and it is a measure of 
     how spread out the data values are. If the data values have been converted to dB, then dynamic range is defined
     as the max value minus the minimum value. 
@@ -243,8 +247,13 @@ def logCompress(data, dynamicRange, rejectLevel):
     the simple conversion to dB. The second is in selecting to display a certain range of dB. 
 
     inputs:
-            
-    """
+            data - envelope-detected data having values >= 0. Dimensions should be scanline x depth/time index
+            dynamicRange - desired dynamic range of data to present [dB]
+            rejectLevel - level of rejection [dB]
+            brightGain - brightness gain [dB]
+    output:
+            xdB3 - processed image, dimensions of scanline x depth/time index
+"""
 
     #compress to dynamic range chosen
     xdB = 20*np.log10(1+data) #add one b/c log10(0) = -inf ('data' should have values >= 0)
@@ -255,6 +264,10 @@ def logCompress(data, dynamicRange, rejectLevel):
     #rejection
     xdB3[np.where(xdB3 <= rejectLevel)] = 0
 
+    #add brightness gain
+    xdB3 = xdB3 + brightGain
+    xdB3[np.where(xdB3 > dynamicRange)] = dynamicRange  #keep maximum value equal to dynamicRange
+    
     return xdB3
 
 def scanConv(data, xb, zb):
@@ -321,9 +334,10 @@ def main():
             
         # log compression and scan conversion
         DR = 30  # dynamic range - units of dB
-        reject = 0 # rejection level -units of dB (must be less than DR)
-        imageLog = logCompress(imTrunc, DR, reject) 
-    
+        reject = 0 # rejection level - units of dB 
+        BG = 0 # brightness gain - units of dB
+        imageLog = logCompress(imTrunc, DR, reject, BG)
+            
         imageSC, zSC, xSC  = scanConv(imageLog, xd2, zTrunc) #convert to 512x512 image
     
         imageSC2 = np.round(255*imageSC/DR) #convert to 8-bit grayscale
