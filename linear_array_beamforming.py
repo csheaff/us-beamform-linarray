@@ -31,7 +31,7 @@ def getTGC(alpha0, propDist):
     where x is the propagation distance, p(0) is the incident pressure, p(x) is the spatially variant pressure
     As a result,  p(x)/p(0) = 10^(-alphadB*x/20)
 
-    Alpha is actually frequency dependent and modeled as alphaDB = alpha0*f^n, where f is frequency and 0 < n < 1
+    Additionally, alpha is modeled as alphaDB = alpha0*f^n, where f is frequency and 0 < n < 1
     For tissue, n ~ 1. alpha0 is usually the parameter specified in units of dB/(MHz-cm). We can compensate
     therefore by multiplying each A-line by 10^(alpha0*f*propDist*100/20). Note that this does not take into
     account the dissipation of acoustic energy with distance due to non-plane wave propagation.
@@ -48,10 +48,9 @@ def getTGC(alpha0, propDist):
     return tgcGain
 
 def preprocUS(data, t, xd):
-    """After receiving of analog signal data, time-gain compensation is usally applied using an amplifier
-    followed by an anti-aliasing filter (low-pass)  and then A/D conversion. The input data is already digitized, so 
-    no need for anti-alias filtering. Following A/D conversion, one would ideally begin beamforming, however
-    the summing process in beamforming can produce very high values if low frequencies. This can result in the generation
+    """Analog time-gain compensation is typically applied followed by an anti-aliasing filter (low-pass) and then A/D conversion. 
+    The input data is already digitized here, so no need for anti-alias filtering. Following A/D conversion, one would ideally begin beamforming, however
+    the summing process in beamforming can produce very high values if low frequencies are included. This can result in the generation
     of a dynamic range in the data that exceeds what's allowable by the number of bits, thereby yielding 
     data loss. Therefore it's necessary to high-pass filter before beamforming. In addition, beamforming is 
     more accurate with a higher sampling rate because the calculated beamforming delays are more accurately 
@@ -65,6 +64,13 @@ def preprocUS(data, t, xd):
     
     In the filtering step I've appied a band-pass, as higher frequencies are also problematic and are usually
     addressed after beamforming. 
+    
+    inputs: data - transmission number x receive channel x time index
+            t - time vector [s]
+            xd - dector position vector [m]
+    
+    outputs: dataApod - processed data
+             t2 - new time vectorssss    
     """
 
     sampleRate = 1/(t[1]-t[0])
@@ -88,19 +94,22 @@ def preprocUS(data, t, xd):
         dataAmp[m,:,:] = data[m,:,:]*tgc
             
     # retrieve filter coefficients
-    # 
+    
     filtOrd = 201
     lc, hc = 0.5e6, 2.5e6
     lc = lc/(sampleRate/2) #normalize to nyquist frequency
     hc = hc/(sampleRate/2)
     B = signal.firwin(filtOrd, [lc, hc], pass_zero=False) #band-pass filter
 
-    # specify interpolation factor, get apodization window
+    # specify interpolation factor 
     interpFact = 4
     sampleRate = sampleRate*interpFact
     samplesPerAcq2 = samplesPerAcq*interpFact
-    apodWin = np.ones(numProbeChan) #signal.tukey(numProbeChan)
 
+    #get apodization window
+    apodWin =  signal.tukey(numProbeChan) #np.ones(numProbeChan)
+
+    #process
     dataApod = np.zeros((numTxBeams, numProbeChan, samplesPerAcq2))
     for m in range(numTxBeams):
         for n in range(numProbeChan):
@@ -253,7 +262,7 @@ def logCompress(data, dynamicRange, rejectLevel, brightGain):
             brightGain - brightness gain [dB]
     output:
             xdB3 - processed image, dimensions of scanline x depth/time index
-"""
+    """
 
     #compress to dynamic range chosen
     xdB = 20*np.log10(1+data) #add one b/c log10(0) = -inf ('data' should have values >= 0)
@@ -271,7 +280,13 @@ def logCompress(data, dynamicRange, rejectLevel, brightGain):
     return xdB3
 
 def scanConv(data, xb, zb):
-    "create 512x512 pixel, 8-bit image from data"
+    """create 512x512 pixel image
+    inputs: data - scanline x depth/time
+            xb - horizontal distance vector
+            zb - depth vector
+    outputs: imageSC - scanline x depth/time
+             znew - new depth vector
+             xnew - new horizontal distance vector"""
 
     interpFunc = interp2d(zb, xb, data, kind='linear')
     xnew = np.linspace(np.min(xb),np.max(xb), 512)
@@ -288,6 +303,7 @@ def main():
     # data get info
     samplesPerAcq = sensorData.shape[2]
 
+    # time vector for data
     t = np.arange(samplesPerAcq)/sampleRate - toffset
 
     xd = np.arange(numProbeChan)*transPitch
@@ -369,8 +385,6 @@ def main():
     ax4.set_xlabel('x(mm)')
     ax4.set_title('Dynamic Focusing')
     plt.show()
-
-# plt.colorbar()
 
 if __name__ == '__main__':
     main()
