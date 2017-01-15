@@ -355,7 +355,7 @@ def main():
     rxFocus = 15e-3
     imageBF1 = beamform(dataApod, t2, xd, rxFocus)
     
-    rxFocus = 35e-3
+    rxFocus = 30e-3
     imageBF2 = beamform(dataApod, t2, xd, rxFocus)
 
     # beamforming with dynamic focusing
@@ -386,7 +386,7 @@ def main():
                                    method='hilbert')
             
         # log compression and scan conversion
-        DR = 30  # dynamic range - units of dB
+        DR = 35  # dynamic range - units of dB
         reject = 0  # rejection level - units of dB
         BG = 0  # brightness gain - units of dB
         imageLog = logCompress(imTrunc, DR, reject, BG)
@@ -419,7 +419,7 @@ def main():
                                       zSC[0]*1e3], cmap='gray', interpolation='none')
     ax3.set_ylabel('Depth(mm)')
     ax3.set_xlabel('x(mm)')
-    ax3.set_title('Fixed Receive Focus at 35 mm')
+    ax3.set_title('Fixed Receive Focus at 30 mm')
 
     ax4.imshow(imagesProc[3], extent=[xSC[0]*1e3, xSC[-1]*1e3, zSC[-1]*1e3,
                                       zSC[0]*1e3], cmap='gray', interpolation='none')
