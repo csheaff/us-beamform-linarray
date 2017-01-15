@@ -294,14 +294,14 @@ def logCompress(data, dynamicRange, rejectLevel, brightGain):
     xdB = 20*np.log10(1+data)  # add 1 b/c log10(0) = -inf ('data' should have values >= 0)
     xdB2 = xdB - np.max(xdB)  # shift such that max is 0 dB
     xdB3 = xdB2 + dynamicRange  # shift such that max is dynamicRange value
-    xdB3[np.where(xdB3 < 0)] = 0  # eliminate data outside of dynamic range
+    xdB3[xdB3 < 0] = 0  # eliminate data outside of dynamic range
 
     # rejection
-    xdB3[np.where(xdB3 <= rejectLevel)] = 0
+    xdB3[xdB3 <= rejectLevel] = 0
 
     # add brightness gain, keep max value = dynamicRange
     xdB3 = xdB3 + brightGain
-    xdB3[np.where(xdB3 > dynamicRange)] = dynamicRange 
+    xdB3[xdB3 > dynamicRange] = dynamicRange
     
     return xdB3
 
@@ -315,9 +315,16 @@ def scanConv(data, xb, zb):
              znew - new depth vector
              xnew - new horizontal distance vector"""
 
+    # decimate in depth dimensions
+    decimFact = 8
+    data = data[:, 0:-1:decimFact]
+    zb = zb[0:-1:decimFact]
+
+    # interpolation
     interpFunc = interp2d(zb, xb, data, kind='linear')
-    xnew = np.linspace(np.min(xb), np.max(xb), 512)
-    znew = np.linspace(np.min(zb), np.max(zb), 512)
+    dz = zb[1]-zb[0]
+    xnew = arange2(xb[0], xb[-1]+dz, dz)  # make pixel square by making dx = dz
+    znew = zb
     imageSC = interpFunc(znew, xnew)
 
     return imageSC, znew, xnew
@@ -333,7 +340,7 @@ def main():
 
     # time vector for data
     t = np.arange(samplesPerAcq)/sampleRate - toffset
-
+    
     # transducer locations relative to the a-line, which is always centered
     xd = np.arange(numProbeChan)*transPitch
     xd = xd - np.max(xd)/2
@@ -419,6 +426,7 @@ def main():
     ax4.set_ylabel('Depth(mm)')
     ax4.set_xlabel('x(mm)')
     ax4.set_title('Dynamic Focusing')
+        
     plt.show()
 
 
