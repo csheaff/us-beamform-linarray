@@ -6,14 +6,14 @@ import h5py
 
 
 # constants
-num_tx_beams = 96
-num_probe_chan = 32
-tx_freq = 1.5e6
-tx_focus = 20e-3
-c0 = 1540
-trans_pitch = 2*1.8519e-4
+n_transmit_beams = 96
+n_probe_channels = 32
+transmit_freq = 1.5e6
+transmit_focal_depth = 20e-3
+speed_sound = 1540
+array_pitch = 2*1.8519e-4
 sample_rate = 27.72e6
-toffset = 1.33e-6  # time at which the middle of the transmission pulse occurs
+time_offset = 1.33e-6  # time at which middle of the transmission pulse occurs
 
 
 def arange2(start, stop=None, step=1):
@@ -28,7 +28,7 @@ def arange2(start, stop=None, step=1):
     return a
 
 
-def get_tGC(alpha0, prop_dist):
+def get_tgc(alpha0, prop_dist):
     """ Time-gain compensation
     The attenuation coefficient of tissue is usually expressed in d_b and
     defined as alpha_dB = 20/x*log10[p(0)/p(x)] where x is the propagation
@@ -41,14 +41,14 @@ def get_tGC(alpha0, prop_dist):
     into account the dissipation of acoustic energy with distance due to
     non-plane wave propagation.
 
-    inputs:  alpha0 - attenutation coefficient in d_b/(MHz-cm)
+    inputs:  alpha0 - attenutation coefficient in db/(MHz-cm)
              prop_dist - round-trip propagation distance of acoustic pulse in
                         meters
 
     outputs: tgc_gain - gain vector for multiplication with A-line """
 
     n = 1  # approx. 1 for soft tissue
-    alpha = alpha0*(tx_freq*1e-6)**n
+    alpha = alpha0*(transmit_freq*1e-6)**n
     tgc_gain = 10**(alpha*prop_dist*100/20)
 
     return tgc_gain
@@ -86,26 +86,25 @@ def preproc(data, t, xd):
     """
 
     sample_rate = 1/(t[1] - t[0])
-    samples_per_acq = data.shape[2]
-    
+    record_length = data.shape[2]
     a0 = 0.4
-    
+
     # get time-gain compensation vectors based on estimate for propagation
     # distance to each element
-    zd = t*c0/2
+    zd = t*speed_sound/2
     zd2 = zd**2
     dist1 = zd
-    tgc = np.zeros((num_probe_chan, samples_per_acq))
-    for r in range(num_probe_chan):
+    tgc = np.zeros((n_probe_channels, record_length))
+    for r in range(n_probe_channels):
         dist2 = np.sqrt(xd[r]**2 + zd2)
         prop_dist = dist1 + dist2
-        tgc[r, :] = get_tGC(a0, prop_dist)
+        tgc[r, :] = get_tgc(a0, prop_dist)
 
     # apply tgc
     data_amp = np.zeros(data.shape)
-    for m in range(num_tx_beams):
+    for m in range(n_transmit_beams):
         data_amp[m, :, :] = data[m, :, :]*tgc
-        
+
     # retrieve filter coefficients
 
     filt_ord = 201
@@ -117,15 +116,15 @@ def preproc(data, t, xd):
     # specify interpolation factor
     interp_fact = 4
     sample_rate = sample_rate*interp_fact
-    samples_per_acq2 = samples_per_acq*interp_fact
+    record_length2 = record_length*interp_fact
 
     # get apodization window
-    apod_win = signal.tukey(num_probe_chan)  # np.ones(num_probe_chan)
+    apod_win = signal.tukey(n_probe_channels)  # np.ones(n_probe_channels)
 
     # process
-    data_apod = np.zeros((num_tx_beams, num_probe_chan, samples_per_acq2))
-    for m in range(num_tx_beams):
-        for n in range(num_probe_chan):
+    data_apod = np.zeros((n_transmit_beams, n_probe_channels, record_length2))
+    for m in range(n_transmit_beams):
+        for n in range(n_probe_channels):
             w = data_amp[m, n, :]
             data_filt = signal.lfilter(B, 1, w)
             data_interp = signal.resample_poly(data_filt, interp_fact, 1)
@@ -134,8 +133,8 @@ def preproc(data, t, xd):
     # create new time vector based on interpolation and filter delay
     freqs, delay = signal.group_delay((B, 1))
     delay = int(delay[0])*interp_fact
-    t2 = np.arange(samples_per_acq2)/sample_rate + t[0] - delay/sample_rate
-    
+    t2 = np.arange(record_length2)/sample_rate + t[0] - delay/sample_rate
+
     # remove signal before t = 0
     f = np.where(t2 < 0)[0]
     t2 = np.delete(t2, f)
@@ -159,19 +158,19 @@ def beamform(data, t, xd, receive_focus):
     """
     Rf = receive_focus
     fs = 1/(t[1]-t[0])
-    delay_ind = np.zeros(num_probe_chan, dtype=int)
-    for r in range(num_probe_chan):
+    delay_ind = np.zeros(n_probe_channels, dtype=int)
+    for r in range(n_probe_channels):
         # difference between propagation time for a central element and that
         # for an off-centered element
-        delay = Rf/c0*(np.sqrt((xd[r]/Rf)**2+1)-1)
+        delay = Rf/speed_sound*(np.sqrt((xd[r]/Rf)**2+1)-1)
         delay_ind[r] = int(round(delay*fs))
     max_delay = np.max(delay_ind)
     
     waveform_length = data.shape[2]
-    image = np.zeros((num_tx_beams, waveform_length))  # initialize
-    for q in range(num_tx_beams):
+    image = np.zeros((n_transmit_beams, waveform_length))  # initialize
+    for q in range(n_transmit_beams):
         scan_line = np.zeros(waveform_length + max_delay)  # initialize
-        for r in range(num_probe_chan):
+        for r in range(n_probe_channels):
             delay_pad = np.zeros(delay_ind[r])
             fill_pad = np.zeros(len(scan_line)-waveform_length-delay_ind[r])
             waveform = data[q, r, :]
@@ -181,7 +180,7 @@ def beamform(data, t, xd, receive_focus):
     return image
 
 
-def beamform_dF(data, t, xd):
+def beamform_df(data, t, xd):
     """Ideally we could focus at all depths in receive when beamforming. This
     is done in an FPGA by using time delays that are time-varying. To clarify,
     suppose we use the above beamform function to focus at some depth z0. Why
@@ -213,14 +212,14 @@ def beamform_dF(data, t, xd):
 
 """
     sample_rate = 1/(t[2]-t[1])
-    zd = t*c0/2  # can be defined arbitrarily to get a higher resolution.
+    zd = t*speed_sound/2  # can be defined arbitrarily for higher resolution
     zd2 = zd**2
-    prop_dist = np.zeros((num_probe_chan, len(zd)))
-    for r in range(num_probe_chan):
+    prop_dist = np.zeros((n_probe_channels, len(zd)))
+    for r in range(n_probe_channels):
         dist1 = zd
         dist2 = np.sqrt(xd[r]**2+zd2)
         prop_dist[r, :] = dist1 + dist2
-    prop_dist_ind = np.round(prop_dist/c0*sample_rate)
+    prop_dist_ind = np.round(prop_dist/speed_sound*sample_rate)
     # acoustic propagation distance from transmission to reception for each
     # element these distances stay the same as we slide across the aperture of
     # the full array
@@ -230,9 +229,9 @@ def beamform_dF(data, t, xd):
     # closest to a null
     prop_dist_ind[f[0], f[1]] = len(t)-1
     scan_line = np.zeros(len(zd))
-    image = np.zeros((num_tx_beams, len(zd)))
-    for q in range(num_tx_beams):  # index transmission
-        for r in range(num_probe_chan):  # index receiver
+    image = np.zeros((n_transmit_beams, len(zd)))
+    for q in range(n_transmit_beams):  # index transmission
+        for r in range(n_probe_channels):  # index receiver
             v = data[q, r, :]      # get recorded waveform
             # index waveform at times corresponding to propagation distance to
             # pixel along a-line
@@ -242,7 +241,7 @@ def beamform_dF(data, t, xd):
     return image
 
 
-def env_det(scan_line, t, method='hilbert'):
+def envel_detect(scan_line, t, method='hilbert'):
     """Envelope detection. This can be done in a few ways:
     (1) Hilbert transform method
         - doesn't require knowledge of carrier frequency
@@ -269,13 +268,13 @@ def env_det(scan_line, t, method='hilbert'):
     if method == 'hilbert':
         envelope = np.abs(signal.hilbert(scan_line))
     elif method == 'demod':
-        demodulated = scan_line*np.exp(-1j*2*np.pi*tx_freq*t)
+        demodulated = scan_line*np.exp(-1j*2*np.pi*transmit_freq*t)
         demod_filt = np.sqrt(2)*signal.filtfilt(b, 1, demodulated)
         envelope = np.abs(demod_filt)
     elif method == 'demod2':
-        I = scan_line*np.cos(2*np.pi*tx_freq*t)
+        I = scan_line*np.cos(2*np.pi*transmit_freq*t)
         If = np.sqrt(2)*signal.filtfilt(b, 1, I)
-        Q = scan_line*np.sin(2*np.pi*tx_freq*t)
+        Q = scan_line*np.sin(2*np.pi*transmit_freq*t)
         Qf = np.sqrt(2)*signal.filtfilt(b, 1, Q)
         envelope = np.sqrt(If**2+Qf**2)
     return envelope
@@ -317,7 +316,7 @@ def log_compress(data, dynamic_range, reject_level, bright_gain):
     return xd_b3
 
 
-def scan_conv(data, xb, zb):
+def scan_convert(data, xb, zb):
     """create 512x512 pixel image
     inputs: data - scanline x depth/time
             xb - horizontal distance vector
@@ -347,35 +346,36 @@ def main():
     sensor_data = h5f['dataset_1'][:]
 
     # data get info
-    samples_per_acq = sensor_data.shape[2]
+    record_length = sensor_data.shape[2]
 
     # time vector for data
-    t = np.arange(samples_per_acq)/sample_rate - toffset
+    time = np.arange(record_length)/sample_rate - time_offset
 
     # transducer locations relative to the a-line, which is always centered
-    xd = np.arange(num_probe_chan)*trans_pitch
+    xd = np.arange(n_probe_channels)*array_pitch
     xd = xd - np.max(xd)/2
 
     # preprocessing - signal filtering, interpolation, and apodization
-    data_apod, t2 = preproc(sensor_data, t, xd)
+    preproc_data, time_shifted = preproc(sensor_data, time, xd)
 
     # B-mode image w/o beamforming (only use waveform from central element)
-    image = data_apod[:, 15, :]
+    image = preproc_data[:, 15, :]
 
     # beamforming with different receive focii
-    rx_focus = 15e-3
-    image_bF1 = beamform(data_apod, t2, xd, rx_focus)
+    receive_focus = 15e-3
+    image_bf1 = beamform(preproc_data, time_shifted, xd, receive_focus)
 
-    rx_focus = 30e-3
-    image_bF2 = beamform(data_apod, t2, xd, rx_focus)
+    receive_focus = 30e-3
+    image_bf2 = beamform(preproc_data, time_shifted, xd, receive_focus)
 
     # beamforming with dynamic focusing
-    image_dF = beamform_dF(data_apod, t2, xd)
+    image_df = beamform_df(preproc_data, time_shifted, xd)
 
-    images = (image, image_bF1, image_bF2, image_dF)
-    z = t2*c0/2
+    images = (image, image_bf1, image_bf2, image_df)
+    z = time_shifted*speed_sound/2
 
-    xd2 = np.arange(num_tx_beams)*trans_pitch
+    # lateral locations of beamformed a-lines
+    xd2 = np.arange(n_transmit_beams)*array_pitch
     xd2 = xd2 - np.max(xd2)/2
 
     # post process all images generated
@@ -391,59 +391,57 @@ def main():
         z_trunc = np.delete(z, f)
         im_trunc = im[:, f[-1]+1:]
 
-        
         # envelope detection
-        for n in range(num_tx_beams):
-            im_trunc[n, :] = env_det(im_trunc[n, :], 2*z_trunc/c0,
+        for n in range(n_transmit_beams):
+            im_trunc[n, :] = envel_detect(im_trunc[n, :], 2*z_trunc/speed_sound,
                                      method='hilbert')
 
-        
         # log compression and scan conversion
-        DR = 35  # dynamic range - units of d_b
-        reject = 0  # rejection level - units of d_b
-        BG = 0  # brightness gain - units of d_b
+        DR = 35   # dynamic range - units of dB
+        reject = 0   # rejection level - units of dB
+        BG = 0   # brightness gain - units of dB
         image_log = log_compress(im_trunc, DR, reject, BG)
 
         # convert to 512x512 image
-        image_sC, z_sC, x_sC = scan_conv(image_log, xd2, z_trunc)
+        image_sc, z_sc, x_sc = scan_convert(image_log, xd2, z_trunc)
 
-        image_sC2 = np.round(255*image_sC/DR)  # convert to 8-bit grayscale
-        image_sC3 = image_sC2.astype('int')
-        
-        images_proc.append(np.transpose(image_sC3))
+        image_sc2 = np.round(255*image_sc/DR)  # convert to 8-bit grayscale
+        image_sc3 = image_sc2.astype('int')
+
+        images_proc.append(np.transpose(image_sc3))
 
     # plotting
 
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(10, 10))
 
-    ax1.imshow(images_proc[0], extent=[x_sC[0]*1e3, x_sC[-1]*1e3,
-                                       z_sC[-1]*1e3, z_sC[0]*1e3], cmap='gray',
+    ax1.imshow(images_proc[0], extent=[x_sc[0]*1e3, x_sc[-1]*1e3,
+                                       z_sc[-1]*1e3, z_sc[0]*1e3], cmap='gray',
                interpolation='none')
     ax1.set_ylabel('Depth(mm)')
     ax1.set_xlabel('x(mm)')
     ax1.set_title('No beamforming')
 
-    ax2.imshow(images_proc[1], extent=[x_sC[0]*1e3, x_sC[-1]*1e3, z_sC[-1]*1e3,
-                                       z_sC[0]*1e3], cmap='gray',
+    ax2.imshow(images_proc[1], extent=[x_sc[0]*1e3, x_sc[-1]*1e3, z_sc[-1]*1e3,
+                                       z_sc[0]*1e3], cmap='gray',
                interpolation='none')
     ax2.set_ylabel('Depth(mm)')
     ax2.set_xlabel('x(mm)')
     ax2.set_title('Fixed Receive Focus at 15 mm')
 
-    ax3.imshow(images_proc[2], extent=[x_sC[0]*1e3, x_sC[-1]*1e3, z_sC[-1]*1e3,
-                                       z_sC[0]*1e3], cmap='gray',
+    ax3.imshow(images_proc[2], extent=[x_sc[0]*1e3, x_sc[-1]*1e3, z_sc[-1]*1e3,
+                                       z_sc[0]*1e3], cmap='gray',
                interpolation='none')
     ax3.set_ylabel('Depth(mm)')
     ax3.set_xlabel('x(mm)')
     ax3.set_title('Fixed Receive Focus at 30 mm')
 
-    ax4.imshow(images_proc[3], extent=[x_sC[0]*1e3, x_sC[-1]*1e3, z_sC[-1]*1e3,
-                                       z_sC[0]*1e3], cmap='gray',
+    ax4.imshow(images_proc[3], extent=[x_sc[0]*1e3, x_sc[-1]*1e3, z_sc[-1]*1e3,
+                                       z_sc[0]*1e3], cmap='gray',
                interpolation='none')
     ax4.set_ylabel('Depth(mm)')
     ax4.set_xlabel('x(mm)')
     ax4.set_title('Dynamic Focusing')
-        
+
     plt.show()
 
 
