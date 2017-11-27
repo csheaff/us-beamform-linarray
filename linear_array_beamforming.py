@@ -340,6 +340,26 @@ def scan_convert(data, xb, zb):
     return image_sC, znew, xnew
 
 
+def get_proc_rfdata():
+    h5f = h5py.File('example_us_bmode_sensor_data.h5', 'r')
+    sensor_data = h5f['dataset_1'][:]
+
+    # data get info
+    record_length = sensor_data.shape[2]
+
+    # time vector for data
+    time = np.arange(record_length)/sample_rate - time_offset
+
+    # transducer locations relative to the a-line, which is always centered
+    xd = np.arange(n_probe_channels)*array_pitch
+    xd = xd - np.max(xd)/2
+
+    # preprocessing - signal filtering, interpolation, and apodization
+    preproc_data, time_shifted = preproc(sensor_data, time, xd)
+
+    return preproc_data, time_shifted, xd
+
+
 def main():
 
     h5f = h5py.File('example_us_bmode_sensor_data.h5', 'r')
