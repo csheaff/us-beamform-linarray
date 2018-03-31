@@ -7,3 +7,6 @@ example_us_bmode_linear_transducer.m not only simulates recorded data but perfor
 One can find the nature of the simulated data as well as a description of the K-wave program here: 
 
 http://www.k-wave.org/documentation/example_us_bmode_linear_transducer.php
+
+![alt text](./beamforming comparison.png)
+
