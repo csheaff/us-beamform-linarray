@@ -1,0 +1,21 @@
+[package]
+name = "pa-tom"
+version = "0.1.0"
+authors = ["Clay Sheaff <claysheaff@protonmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ndarray = { version = "0.13.1", features = ["blas"] }
+ndarray-linalg = { version = "0.12"}
+ndarray-stats = { version = "0.3"}
+num-integer = "0.1"
+blas-src = { version = "0.2.0", default-features = false, features = ["openblas"] }
+openblas-src = { version = "0.6.0", default-features = false, features = ["cblas", "system"] }
+fftw-src = { version = "0.3.0"} # had to set CC=/usr/bin/gcc followed by 'cargo clean' to compile correctly (anaconda conflict)
+fftw = { version = "0.6.0"}
+image = { version = "0.23.4"}
+
+[profile.release]
+debug = true
