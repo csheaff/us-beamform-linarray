@@ -16,6 +16,8 @@ openblas-src = { version = "0.6.0", default-features = false, features = ["cblas
 fftw-src = { version = "0.3.0"} # had to set CC=/usr/bin/gcc followed by 'cargo clean' to compile correctly (anaconda conflict)
 fftw = { version = "0.6.0"}
 image = { version = "0.23.4"}
+hdf5 = { version = "0.6.1"}  # requires debian package libhdf5-dev
+
 
 [profile.release]
 debug = true
