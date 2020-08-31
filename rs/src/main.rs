@@ -43,7 +43,23 @@ fn preproc(data: &Array3<f64>, t: &Array1<f64>, xd: &Array1<f64>) -> (Array3<f64
     (preproc_data, t_shifted)
 }
 								   
-	   
+
+fn beamform_df(preproc_data: &Array3<f64>, time: &Array1<f64>, xd: &Array1<f64>) {
+    
+    let zd = time * SPEED_SOUND / 2.0;
+    let zd2 = zd.mapv(|x| x.powi(2));
+    let mut prop_dist = Array2::<f64>::zeros((N_PROBE_CHANNELS as usize, zd.len()));
+    for r in 0..N_PROBE_CHANNELS {
+	let dist = (xd[r as usize].powi(2) + &zd2).mapv(<f64>::sqrt);
+	let mut slice = prop_dist.slice_mut(s![r as usize, ..]);
+	slice.assign(&dist);
+    }
+    let prop_dist_ind = (prop_dist / SPEED_SOUND * SAMPLE_RATE).mapv(|x| x.round() as usize);
+    
+    
+}
+
+
 fn main() {
     let data_path = "../example_us_bmode_sensor_data.h5";
     let data = get_data(data_path);
@@ -55,3 +71,5 @@ fn main() {
     
     println!("{:?}", xd_max)
 }
+
+
