@@ -9,6 +9,7 @@ use fftw::types::*;
 use num_integer::Roots;
 use std::f64::consts::PI;
 use std::time::Instant;
+use std::vec::Vec;
 use hdf5::File;
 
 const SAMPLE_RATE: f64 = 27.72e6;
@@ -44,6 +45,18 @@ fn preproc(data: &Array3<f64>, t: &Array1<f64>, xd: &Array1<f64>) -> (Array3<f64
 }
 								   
 
+
+fn where_2D(bools: Array2<bool>) -> Vec<(usize, usize)> {
+    // This is designed to behave like np.where. Currently ndarray does not
+    // provide this function natively. See https://github.com/rust-ndarray/ndarray/issues/466	
+    let x: Vec<_> = bools
+        .indexed_iter()
+        .filter_map(|(index, &item)| if item { Some(index) } else { None })
+	.collect();
+    return x
+}
+
+
 fn beamform_df(preproc_data: &Array3<f64>, time: &Array1<f64>, xd: &Array1<f64>) {
     
     let zd = time * SPEED_SOUND / 2.0;
@@ -54,7 +67,17 @@ fn beamform_df(preproc_data: &Array3<f64>, time: &Array1<f64>, xd: &Array1<f64>)
 	let mut slice = prop_dist.slice_mut(s![r as usize, ..]);
 	slice.assign(&dist);
     }
-    let prop_dist_ind = (prop_dist / SPEED_SOUND * SAMPLE_RATE).mapv(|x| x.round() as usize);
+    let mut prop_dist_ind = (prop_dist / SPEED_SOUND * SAMPLE_RATE).mapv(|x| x.round() as usize);
+    
+    let is_outbounds = prop_dist_ind.mapv(|x| x >= time.len());
+    let outbounds_inds = where_2D(is_outbounds);
+    let replacement_val = time.len() - 1
+    for oi in outbounds_inds.iter() {
+	let mut slice = prop_dist_ind.slice_mut(s![oi.0, oi.1]);
+	slice.assign(&replacement_val);  // Clay, this is currently broken
+    }
+        
+
     
     
 }
@@ -73,3 +96,16 @@ fn main() {
 }
 
 
+// fn main() {
+//     let bools = array![[false, true, false], [true, false, true]];
+//     // let nonzero: Vec<_> = bools
+//     //     .indexed_iter()
+//     //     .filter_map(|(index, &item)| if item { Some(index) } else { None })
+//     //     .collect();
+
+//     let bools2 = where_2D(bools);
+    
+//     assert_eq!(bools2, vec![(0, 1), (1, 0), (1, 2)]);
+
+   
+// }
