@@ -24,7 +24,7 @@ time_offset = 1.33e-6  # time at which middle of the transmission pulse occurs
 #              /       \
 # - - - - - - - - - - - - - - - - - - -
 #             |---------|
-#        32 active transmit chan
+#           32 active chan
 #
 #                \       /
 #                 \     /          
@@ -34,7 +34,7 @@ time_offset = 1.33e-6  # time at which middle of the transmission pulse occurs
 #                /       \
 # - - - - - - - - - - - - - - - - - - -
 #               |---------|
-#          32 active transmit chan
+#              32 active chan
 #
 #                  \       /       
 #                   \     /          
@@ -44,19 +44,20 @@ time_offset = 1.33e-6  # time at which middle of the transmission pulse occurs
 #                  /       \
 # - - - - - - - - - - - - - - - - - - -
 #                 |---------|
-#           32 active transmit chan
+#                32 active chan
 #              
 # Beam tranmission moves laterally with different 
-# groups of 32 channels tranmitting. This happens 96 times,
-# so we can consider there to be 96 elements in the probe
-# all-together. These 96 elements are all receiving for each
-# transmission.
+# groups of 32 active channels. This happens 96 times,
+# so we can consider there to be 128 elements in the probe
+# all-together. However for each transmission, we will only have
+# 32 received waveforms, which correspond to the 32 recivers centered
+# upon the transmitting position.
 #
 # If one considers the transmission to be plane-wave like,
-# the distance to the target is simply that target's detph, z.
+# the distance to an given target is simply that target's depth, z.
 # The target is considered a point source that reflects isotropically..
-# The distance from target to receiver is then the euclidean distance from the target
-# to the receive element. i.e. 
+# The distance from target to receiver is then the euclidean distance from
+# the target to the receive element. i.e.
 #
 #  dist = transmit_dist + receive_dist = z + sqrt(((x - x0)**2 + z**2)
 #
@@ -186,12 +187,12 @@ def preproc(data, t, xd):
             w = data_amp[m, n, :]
             data_filt = signal.lfilter(B, 1, w)
             data_interp = signal.resample_poly(data_filt, interp_fact, 1)
-            data_apod[m, n, :] = apod_win[n]*data_interp
+            data_apod[m, n, :] = apod_win[n] * data_interp
 
     # create new time vector based on interpolation and filter delay
     freqs, delay = signal.group_delay((B, 1))
-    delay = int(delay[0])*interp_fact
-    t2 = np.arange(record_length2)/sample_rate + t[0] - delay/sample_rate
+    delay = int(delay[0]) * interp_fact
+    t2 = np.arange(record_length2) / sample_rate + t[0] - delay / sample_rate
 
     # remove signal before t = 0
     f = np.where(t2 < 0)[0]
@@ -269,31 +270,49 @@ def beamform_df(data, t, xd):
             image - beamformed data, dimensions of (scanline index, depth)
 
 """
-    sample_rate = 1/(t[2]-t[1])
-    zd = t*speed_sound/2  # can be defined arbitrarily for higher resolution
+    # We want to create a single beaformed a-line for each tranmission.
+    # The lateral position of that a-line is aligned with the center of the
+    # transmission. So, the following will get the acoustic propagation distance
+    # starting at transmission, to a pixel above the center of the tranmission
+    # and then to a receiver. This is done across all depths and receivers, which
+    # can then be used to index the waveforms and perform the beamforming. 
+    # These distances stay the same as we slide across the aperture of
+    # the full array because they are relative to the center element.
+    # So only a single 2d matrix is needed.
+    sample_rate = 1 / (t[2] - t[1])
+    zd = t * speed_sound / 2  # can be defined arbitrarily for higher resolution
     zd2 = zd**2
     prop_dist = np.zeros((n_probe_channels, len(zd)))
     for r in range(n_probe_channels):
         dist1 = zd
-        dist2 = np.sqrt(xd[r]**2+zd2)
+        dist2 = np.sqrt(xd[r]**2 + zd2)
         prop_dist[r, :] = dist1 + dist2
-    prop_dist_ind = np.round(prop_dist/speed_sound*sample_rate)
-    # acoustic propagation distance from transmission to reception for each
-    # element these distances stay the same as we slide across the aperture of
-    # the full array
-    prop_dist_ind = prop_dist_ind.astype('int')
-    f = np.where(prop_dist_ind >= len(t))  # eliminate out-of-bounds indices
-    # replace with last index (likely to be of low signal at that location i.e
-    # closest to a null
+    
+    pdb.set_trace()
 
-    prop_dist_ind[f[0], f[1]] = len(t)-1
+    # convert distance to sampling index
+    prop_dist_ind = np.round(prop_dist / speed_sound * sample_rate)
+    prop_dist_ind = prop_dist_ind.astype('int')
+
+    print(prop_dist_ind)
+    print(prop_dist_ind.shape)
+    pdb.set_trace()
+
+    # Eliminate out-of-bounds indices.
+    # These indices can occur if the estimated propagation time to a peripheral
+    # receiver is longer than the acquision time.
+    # Replace these indices with last index of the waveform (likely to be of low signal 
+    # at that location i.e closest to a null.
+    oob_inds = np.where(prop_dist_ind >= len(t)) 
+    prop_dist_ind[oob_inds[0], oob_inds[1]] = len(t)-1
+
+    # perform beamforming
     image = np.zeros((n_transmit_beams, len(zd)))
-    for q in range(n_transmit_beams):  # index transmission
+    for q in range(n_transmit_beams):  # index transmission (96 total)
+        data_received = data[q, ...]
         scan_line = np.zeros(len(zd))
-        for r in range(n_probe_channels):  # index receiver
-            v = data[q, r, :]      # get recorded waveform
-            # index waveform at times corresponding to propagation distance to
-            # pixel along a-line
+        for r in range(n_probe_channels):  # index receiver (32 total)
+            v = data_received[r, :]
             scan_line = scan_line + v[prop_dist_ind[r, :]]
         image[q, :] = scan_line
     return image
@@ -406,16 +425,50 @@ def get_proc_rfdata():
     record_length = sensor_data.shape[2]
 
     # time vector for data
-    time = np.arange(record_length)/sample_rate - time_offset
+    time = np.arange(record_length) / sample_rate - time_offset
 
     # transducer locations relative to the a-line, which is always centered
-    xd = np.arange(n_probe_channels)*array_pitch
-    xd = xd - np.max(xd)/2
+    xd = np.arange(n_probe_channels) * array_pitch
+    xd = xd - np.max(xd) / 2
 
     # preprocessing - signal filtering, interpolation, and apodization
     preproc_data, time_shifted = preproc(sensor_data, time, xd)
 
     return preproc_data, time_shifted, xd
+
+
+def plot(images_proc, x_sc, z_sc):
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(10, 10))
+
+    ax1.imshow(images_proc[0], extent=[x_sc[0]*1e3, x_sc[-1]*1e3,
+                                       z_sc[-1]*1e3, z_sc[0]*1e3], cmap='gray',
+               interpolation='none')
+    ax1.set_ylabel('Depth(mm)')
+    ax1.set_xlabel('x(mm)')
+    ax1.set_title('No beamforming')
+
+    ax2.imshow(images_proc[1], extent=[x_sc[0]*1e3, x_sc[-1]*1e3, z_sc[-1]*1e3,
+                                       z_sc[0]*1e3], cmap='gray',
+               interpolation='none')
+    ax2.set_ylabel('Depth(mm)')
+    ax2.set_xlabel('x(mm)')
+    ax2.set_title('Fixed Receive Focus at 15 mm')
+
+    ax3.imshow(images_proc[2], extent=[x_sc[0]*1e3, x_sc[-1]*1e3, z_sc[-1]*1e3,
+                                       z_sc[0]*1e3], cmap='gray',
+               interpolation='none')
+    ax3.set_ylabel('Depth(mm)')
+    ax3.set_xlabel('x(mm)')
+    ax3.set_title('Fixed Receive Focus at 30 mm')
+
+    ax4.imshow(images_proc[3], extent=[x_sc[0]*1e3, x_sc[-1]*1e3, z_sc[-1]*1e3,
+                                       z_sc[0]*1e3], cmap='gray',
+               interpolation='none')
+    ax4.set_ylabel('Depth(mm)')
+    ax4.set_xlabel('x(mm)')
+    ax4.set_title('Dynamic Focusing')
+
+    plt.show()
 
 
 def main():
@@ -430,8 +483,8 @@ def main():
     time = np.arange(record_length)/sample_rate - time_offset
 
     # transducer locations relative to the a-line, which is always centered
-    xd = np.arange(n_probe_channels)*array_pitch
-    xd = xd - np.max(xd)/2
+    xd = np.arange(n_probe_channels) * array_pitch
+    xd = xd - np.max(xd) / 2
 
     # preprocessing - signal filtering, interpolation, and apodization
     preproc_data, time_shifted = preproc(sensor_data, time, xd)
@@ -488,39 +541,7 @@ def main():
 
         images_proc.append(np.transpose(image_sc3))
 
-    # plotting
-
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(10, 10))
-
-    ax1.imshow(images_proc[0], extent=[x_sc[0]*1e3, x_sc[-1]*1e3,
-                                       z_sc[-1]*1e3, z_sc[0]*1e3], cmap='gray',
-               interpolation='none')
-    ax1.set_ylabel('Depth(mm)')
-    ax1.set_xlabel('x(mm)')
-    ax1.set_title('No beamforming')
-
-    ax2.imshow(images_proc[1], extent=[x_sc[0]*1e3, x_sc[-1]*1e3, z_sc[-1]*1e3,
-                                       z_sc[0]*1e3], cmap='gray',
-               interpolation='none')
-    ax2.set_ylabel('Depth(mm)')
-    ax2.set_xlabel('x(mm)')
-    ax2.set_title('Fixed Receive Focus at 15 mm')
-
-    ax3.imshow(images_proc[2], extent=[x_sc[0]*1e3, x_sc[-1]*1e3, z_sc[-1]*1e3,
-                                       z_sc[0]*1e3], cmap='gray',
-               interpolation='none')
-    ax3.set_ylabel('Depth(mm)')
-    ax3.set_xlabel('x(mm)')
-    ax3.set_title('Fixed Receive Focus at 30 mm')
-
-    ax4.imshow(images_proc[3], extent=[x_sc[0]*1e3, x_sc[-1]*1e3, z_sc[-1]*1e3,
-                                       z_sc[0]*1e3], cmap='gray',
-               interpolation='none')
-    ax4.set_ylabel('Depth(mm)')
-    ax4.set_xlabel('x(mm)')
-    ax4.set_title('Dynamic Focusing')
-
-    plt.show()
+    plot(images_proc, x_sc, z_sc)
 
 
 if __name__ == '__main__':
