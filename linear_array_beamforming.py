@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from scipy import signal
 from scipy.interpolate import interp2d
 import h5py
-
+import pdb
 
 # constants
 n_transmit_beams = 96
@@ -15,6 +15,64 @@ array_pitch = 2*1.8519e-4
 sample_rate = 27.72e6
 time_offset = 1.33e-6  # time at which middle of the transmission pulse occurs
 
+#  
+#              \       /
+#               \     /          
+#                \   /
+#                /   \            
+#               /     \
+#              /       \
+# - - - - - - - - - - - - - - - - - - -
+#             |---------|
+#        32 active transmit chan
+#
+#                \       /
+#                 \     /          
+#                  \   /
+#                  /   \            
+#                 /     \
+#                /       \
+# - - - - - - - - - - - - - - - - - - -
+#               |---------|
+#          32 active transmit chan
+#
+#                  \       /       
+#                   \     /          
+#                    \   /         
+#                    /   \            
+#                   /     \
+#                  /       \
+# - - - - - - - - - - - - - - - - - - -
+#                 |---------|
+#           32 active transmit chan
+#              
+# Beam tranmission moves laterally with different 
+# groups of 32 channels tranmitting. This happens 96 times,
+# so we can consider there to be 96 elements in the probe
+# all-together. These 96 elements are all receiving for each
+# transmission.
+#
+# If one considers the transmission to be plane-wave like,
+# the distance to the target is simply that target's detph, z.
+# The target is considered a point source that reflects isotropically..
+# The distance from target to receiver is then the euclidean distance from the target
+# to the receive element. i.e. 
+#
+#  dist = transmit_dist + receive_dist = z + sqrt(((x - x0)**2 + z**2)
+#
+# where x0 is the lateral position of central active element group and
+# x is the lateral position of element.
+#
+#                      /|
+#                     / |
+# (xd^2 + z^2)^(1/2) /  | z
+#                   /   |
+#                  /    |
+#                 /     |
+# - - - - - - - - - - - - - - - - - - - -
+#               x      x0
+#               |-------|
+#                  xd
 
 def arange2(start, stop=None, step=1):
     """#Modified version of numpy.arange which corrects error associated with non
@@ -227,17 +285,17 @@ def beamform_df(data, t, xd):
     f = np.where(prop_dist_ind >= len(t))  # eliminate out-of-bounds indices
     # replace with last index (likely to be of low signal at that location i.e
     # closest to a null
+
     prop_dist_ind[f[0], f[1]] = len(t)-1
-    scan_line = np.zeros(len(zd))
     image = np.zeros((n_transmit_beams, len(zd)))
     for q in range(n_transmit_beams):  # index transmission
+        scan_line = np.zeros(len(zd))
         for r in range(n_probe_channels):  # index receiver
             v = data[q, r, :]      # get recorded waveform
             # index waveform at times corresponding to propagation distance to
             # pixel along a-line
             scan_line = scan_line + v[prop_dist_ind[r, :]]
-            image[q, :] = scan_line
-        scan_line = np.zeros(len(zd))
+        image[q, :] = scan_line
     return image
 
 
