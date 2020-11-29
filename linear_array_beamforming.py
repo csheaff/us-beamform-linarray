@@ -489,6 +489,8 @@ def main():
     # preprocessing - signal filtering, interpolation, and apodization
     preproc_data, time_shifted = preproc(sensor_data, time, xd)
 
+    pdb.set_trace()
+
     # B-mode image w/o beamforming (only use waveform from central element)
     image = preproc_data[:, 15, :]
 

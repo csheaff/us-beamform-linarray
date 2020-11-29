@@ -28,6 +28,7 @@ const ARRAY_PITCH: f64 = 2.0 * 1.8519e-4;
 const REC_LEN: u32 = 1585;
 const INTERP_FACT: u32 = 4;
 
+
 fn get_data(data_path: &str) -> Array3<f64> {
     let file = hdf5::File::open(data_path).unwrap();
     let data = file.dataset("dataset_1").unwrap();
@@ -46,32 +47,44 @@ fn preproc(data: &Array3<f64>, t: &Array1<f64>, xd: &Array1<f64>) -> (Array3<f64
 
     // TODO: Set up filter coefs and apod window
 
-    let record_length_2 = REC_LEN * INTERP_FACT;
-    let mut data_apod = Array3::<f64>::zeros((
+    let rec_len_interp = REC_LEN * INTERP_FACT;
+    let mut data_interp = Array3::<f64>::zeros((
 	N_PROBE_CHANNELS as usize, 
 	N_TRANSMIT_BEAMS as usize,
-	record_length_2 as usize,
+	rec_len_interp as usize,
     ));
     let mut buffer = SingleBuffer::new();
-    for n in 0..N_PROBE_CHANNELS {
-	for m in 0..N_TRANSMIT_BEAMS {
-	    let mut waveform = data_apod.slice_mut(s![n as usize, m as usize, ..]);
+    for n in 0..1 { //N_PROBE_CHANNELS {
+	for m in 0..1 {//N_TRANSMIT_BEAMS {
+	    let waveform = data.slice(s![n as usize, m as usize, ..]);
 	    // let mut dsp_vec = DspVec::<_, _, meta::Real, meta::Time>::from(waveform.to_owned().into_raw_vec());
 	    let mut dsp_vec = waveform.to_owned().into_raw_vec().to_real_time_vec();
-	    let waveform_interp = dsp_vec.interpolatei(&mut buffer, &RaisedCosineFunction::new(0.35), INTERP_FACT).unwrap();
-	    // Problem here - I'm getting empty results.
+	    dsp_vec.interpolatei(&mut buffer, &RaisedCosineFunction::new(0.35), INTERP_FACT).unwrap();
+	    
+	    // the number of points is 6340, which is 4 * 1585, which is correct given
+	    // in interp value of 4. However, whe you extract the data, you get a vec of 12680.
+	    // I have no idea why. The discrepancy in these print statements demonstrate:
 
-	    // println!("{:?}", waveform_interp);
-	    // waveform.assign(&waveform_interp.unwrap());
+	    let (vec, points) = dsp_vec.get(); 
+	    println!("{:?}", vec.len());
+	    println!("{:?}", points);
+	    
+	    //The documentation for "points" says that if the data is complex, then there will
+	    //be too floating point numbers for every point. This could explain why it's double.
+	    //But the data is real so...???
+
+	    //I've posted an issue here: https://github.com/liebharc/basic_dsp/issues/46
+	    
+	    // Once you figure that out, you should be able to just access the data
+	    // using dsp_vec.data rather than using get(). Like so:	 
+	    // let mut waveform_interp = data_interp.slice_mut(s![n as usize, m as usize, ..]);
+	    // waveform_interp.assign(&Array1::from(dsp_vec.data));
 	}
     }
-
-    
-    let preproc_data = data.clone();
-    let t_shifted = t.clone();
-    (preproc_data, t_shifted)
+    let t_interp = Array::range(0.0, rec_len_interp as f64, 1.0);   
+    (data_interp, t_interp)
 }
-								   
+
 
 fn where_2D(bools: Array2<bool>) -> Vec<(usize, usize)> {
     // This is designed to behave like np.where. Currently ndarray does not
@@ -100,14 +113,14 @@ fn beamform_df(preproc_data: &Array3<f64>, time: &Array1<f64>, xd: &Array1<f64>)
 	let mut slice = prop_dist.slice_mut(s![r as usize, ..]);
 	slice.assign(&dist);
     }
-    let mut prop_dist_ind = (prop_dist / SPEED_SOUND * SAMPLE_RATE).mapv(|x| x.round() as usize);
+    let prop_dist_ind = (prop_dist / SPEED_SOUND * SAMPLE_RATE).mapv(|x| x.round() as usize);
     
-    // GET INTERPOLATION WORKING BEFORE PROCEEDING HERE
-
     // replace with last index (likely to be of low signal at that location i.e
     // closest to a null.
-    // let is_outbounds = prop_dist_ind.mapv(|x| x >= time.len());
-    // let outbounds_inds = where_2D(is_outbounds);
+    let is_oob = prop_dist_ind.mapv(|x| x >= time.len());
+    let oob_inds = where_2D(is_oob);
+
+    println!("{:?}", oob_inds);
     
     // let replacement_ind = (time.len() - 1) as usize;
     // for oi in outbounds_inds.iter() {
@@ -115,7 +128,7 @@ fn beamform_df(preproc_data: &Array3<f64>, time: &Array1<f64>, xd: &Array1<f64>)
 	// slice.assign(&replacement_ind);  // Clay, this is currently broken
     // }
         
-    let mut image = Array2::<f64>::zeros((N_PROBE_CHANNELS as usize, zd.len()));
+    let image = Array2::<f64>::zeros((N_PROBE_CHANNELS as usize, zd.len()));
     
     return image
 }
@@ -132,19 +145,21 @@ fn main() {
     // println!("{:?}", xd_max);
     // println!("{:?}", 333333);
 
-    let (preproc_data, t_shifted) = preproc(&data, &t, &xd);
+    let (preproc_data, t_interp) = preproc(&data, &t, &xd);
 
-    // let image = beamform_df(&preproc_data, &t_shifted, &xd);
+    // let _ = beamform_df(&preproc_data, &t_interp, &xd);
 
 }
 
-
 // fn main() {
-//     let bools = array![[false, true, false], [true, false, true]];
-//     // let nonzero: Vec<_> = bools
-//     //     .indexed_iter()
-//     //     .filter_map(|(index, &item)| if item { Some(index) } else { None })
-//     //     .collect();
-//     let bools2 = where_2D(bools);
-//     assert_eq!(bools2, vec![(0, 1), (1, 0), (1, 2)]);   
+
+//     // let v = Array::range(0.0, 1000.0, 1.0);
+//     // let mut dsp_vec = v.to_owned().into_raw_vec().to_real_time_vec();
+//     // let mut dsp_vec = vec![
+//     let mut dsp_vec = vec![0.0; 1000].to_real_time_vec();
+//     let mut buffer = SingleBuffer::new();
+//     dsp_vec.interpolatei(&mut buffer, &RaisedCosineFunction::new(0.35), 2).unwrap();
+//     let (vec, points) = dsp_vec.get();
+//     println!("{:?}", vec.len());
+//     println!("{:?}", points);
 // }
