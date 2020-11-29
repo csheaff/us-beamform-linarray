@@ -56,29 +56,18 @@ fn preproc(data: &Array3<f64>, t: &Array1<f64>, xd: &Array1<f64>) -> (Array3<f64
     let mut buffer = SingleBuffer::new();
     for n in 0..1 { //N_PROBE_CHANNELS {
 	for m in 0..1 {//N_TRANSMIT_BEAMS {
+	    // get waveform and convert to DspVec<f64>
 	    let waveform = data.slice(s![n as usize, m as usize, ..]);
-	    // let mut dsp_vec = DspVec::<_, _, meta::Real, meta::Time>::from(waveform.to_owned().into_raw_vec());
 	    let mut dsp_vec = waveform.to_owned().into_raw_vec().to_real_time_vec();
+
+	    // interpolate - currently a bug(ish) requiring truncation. See https://github.com/liebharc/basic_dsp/issues/46
 	    dsp_vec.interpolatei(&mut buffer, &RaisedCosineFunction::new(0.35), INTERP_FACT).unwrap();
-	    
-	    // the number of points is 6340, which is 4 * 1585, which is correct given
-	    // in interp value of 4. However, whe you extract the data, you get a vec of 12680.
-	    // I have no idea why. The discrepancy in these print statements demonstrate:
+	    let (mut dsp_vec_data, points) = dsp_vec.get();
+	    dsp_vec_data.truncate(points);	    
 
-	    let (vec, points) = dsp_vec.get(); 
-	    println!("{:?}", vec.len());
-	    println!("{:?}", points);
-	    
-	    //The documentation for "points" says that if the data is complex, then there will
-	    //be too floating point numbers for every point. This could explain why it's double.
-	    //But the data is real so...???
-
-	    //I've posted an issue here: https://github.com/liebharc/basic_dsp/issues/46
-	    
-	    // Once you figure that out, you should be able to just access the data
-	    // using dsp_vec.data rather than using get(). Like so:	 
-	    // let mut waveform_interp = data_interp.slice_mut(s![n as usize, m as usize, ..]);
-	    // waveform_interp.assign(&Array1::from(dsp_vec.data));
+	    // plug into new array
+	    let mut waveform_interp = data_interp.slice_mut(s![n as usize, m as usize, ..]);
+	    waveform_interp.assign(&Array1::from(dsp_vec_data));
 	}
     }
     let t_interp = Array::range(0.0, rec_len_interp as f64, 1.0);   
@@ -153,13 +142,16 @@ fn main() {
 
 // fn main() {
 
-//     // let v = Array::range(0.0, 1000.0, 1.0);
-//     // let mut dsp_vec = v.to_owned().into_raw_vec().to_real_time_vec();
-//     // let mut dsp_vec = vec![
-//     let mut dsp_vec = vec![0.0; 1000].to_real_time_vec();
+//     let v = Array::range(0.0, 5.0, 1.0);
+//     let mut dsp_vec = v.to_owned().into_raw_vec().to_real_time_vec();
+
+//     // let mut dsp_vec = vec![0.0; 5].to_real_time_vec();
 //     let mut buffer = SingleBuffer::new();
 //     dsp_vec.interpolatei(&mut buffer, &RaisedCosineFunction::new(0.35), 2).unwrap();
-//     let (vec, points) = dsp_vec.get();
-//     println!("{:?}", vec.len());
-//     println!("{:?}", points);
+
+//     let (mut vec, points) = dsp_vec.get();
+//     vec.truncate(points);
+//     let yo = Array::from(vec);
+//     println!("{:?}", yo);
+//     // println!("{:?}", vec);
 // }
