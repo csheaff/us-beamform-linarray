@@ -122,8 +122,8 @@ fn beamform_df(data: &Array3<f64>, time: &Array1<f64>, xd: &Array1<f64>) -> Arra
     }
     
     // beamform
-    let mut image = Array2::<f64>::zeros((N_PROBE_CHANNELS as usize, zd.len()));
-    for n in 0..1 {//N_TRANSMIT_BEAMS {
+    let mut image = Array2::<f64>::zeros((N_TRANSMIT_BEAMS as usize, zd.len()));
+    for n in 0..N_TRANSMIT_BEAMS {
         let mut scan_line = Array1::<f64>::zeros(zd.len());
 	for m in 0..N_PROBE_CHANNELS {
 	    let waveform = data.slice(s![n as usize, m as usize, ..]).into_owned();
