@@ -138,7 +138,10 @@ fn beamform_df(data: &Array3<f64>, time: &Array1<f64>, xd: &Array1<f64>) -> Arra
 }
 
 
-fn envel_detect() {
+fn envel_detect(scanline: Array1<f64>) -> Array1<f64> {
+
+ //TODO figure out how to implement Hilbert transform.
+// This looks like the best best: https://github.com/paulchernoch/hilbert
 
 
 }
@@ -168,7 +171,7 @@ fn main() {
 
     let image = beamform_df(&preproc_data, &t_interp, &xd);
 
-    println!("{:?}", image);
+    // println!("{:?}", image);
 
 
     // TODO

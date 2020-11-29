@@ -192,7 +192,7 @@ def preproc(data, t, xd):
     # create new time vector based on interpolation and filter delay
     freqs, delay = signal.group_delay((B, 1))
     delay = int(delay[0]) * interp_fact
-    t2 = np.arange(record_length2) / sample_rate + t[0] - delay / sample_rate
+    t2 = np.arange(record_length2) / sample_rate + t[0] - delay / sample_rate - time_offset
 
     # remove signal before t = 0
     f = np.where(t2 < 0)[0]
@@ -287,16 +287,10 @@ def beamform_df(data, t, xd):
         dist1 = zd
         dist2 = np.sqrt(xd[r]**2 + zd2)
         prop_dist[r, :] = dist1 + dist2
-    
-    pdb.set_trace()
 
     # convert distance to sampling index
     prop_dist_ind = np.round(prop_dist / speed_sound * sample_rate)
     prop_dist_ind = prop_dist_ind.astype('int')
-
-    print(prop_dist_ind)
-    print(prop_dist_ind.shape)
-    pdb.set_trace()
 
     # Eliminate out-of-bounds indices.
     # These indices can occur if the estimated propagation time to a peripheral
@@ -304,7 +298,7 @@ def beamform_df(data, t, xd):
     # Replace these indices with last index of the waveform (likely to be of low signal 
     # at that location i.e closest to a null.
     oob_inds = np.where(prop_dist_ind >= len(t)) 
-    prop_dist_ind[oob_inds[0], oob_inds[1]] = len(t)-1
+    prop_dist_ind[oob_inds[0], oob_inds[1]] = len(t) - 1
 
     # perform beamforming
     image = np.zeros((n_transmit_beams, len(zd)))
@@ -488,8 +482,6 @@ def main():
 
     # preprocessing - signal filtering, interpolation, and apodization
     preproc_data, time_shifted = preproc(sensor_data, time, xd)
-
-    pdb.set_trace()
 
     # B-mode image w/o beamforming (only use waveform from central element)
     image = preproc_data[:, 15, :]
