@@ -49,13 +49,13 @@ fn preproc(data: &Array3<f64>, t: &Array1<f64>, xd: &Array1<f64>) -> (Array3<f64
 
     let rec_len_interp = REC_LEN * INTERP_FACT;
     let mut data_interp = Array3::<f64>::zeros((
-	N_PROBE_CHANNELS as usize, 
 	N_TRANSMIT_BEAMS as usize,
+	N_PROBE_CHANNELS as usize,
 	rec_len_interp as usize,
     ));
     let mut buffer = SingleBuffer::new();
-    for n in 0..1 { //N_PROBE_CHANNELS {
-	for m in 0..1 {//N_TRANSMIT_BEAMS {
+    for n in 0..N_TRANSMIT_BEAMS {
+	for m in 0..N_PROBE_CHANNELS {
 	    // get waveform and convert to DspVec<f64>
 	    let waveform = data.slice(s![n as usize, m as usize, ..]);
 	    let mut dsp_vec = waveform.to_owned().into_raw_vec().to_real_time_vec();
@@ -87,7 +87,6 @@ fn where_2D(bools: Array2<bool>) -> Vec<(usize, usize)> {
 
 
 fn beamform_df(preproc_data: &Array3<f64>, time: &Array1<f64>, xd: &Array1<f64>) -> Array2<f64> {
-
     // acoustic propagation distance from transmission to reception for each
     // element. Note: transmission is consdiered to arise from the center
     // of the array.
@@ -95,15 +94,15 @@ fn beamform_df(preproc_data: &Array3<f64>, time: &Array1<f64>, xd: &Array1<f64>)
     let zd2 = zd.mapv(|x| x.powi(2));
     let mut prop_dist = Array2::<f64>::zeros((N_PROBE_CHANNELS as usize, zd.len()));
 
-    println!("{:?}", prop_dist);
-
     for r in 0..N_PROBE_CHANNELS {
 	let dist = (xd[r as usize].powi(2) + &zd2).mapv(<f64>::sqrt);
 	let mut slice = prop_dist.slice_mut(s![r as usize, ..]);
 	slice.assign(&dist);
     }
-    let prop_dist_ind = (prop_dist / SPEED_SOUND * SAMPLE_RATE).mapv(|x| x.round() as usize);
+    let mut prop_dist_ind = (prop_dist / SPEED_SOUND * SAMPLE_RATE).mapv(|x| x.round() as usize);
     
+    // println!("{:?}", prop_dist_ind);
+
     // replace with last index (likely to be of low signal at that location i.e
     // closest to a null.
     let is_oob = prop_dist_ind.mapv(|x| x >= time.len());
@@ -111,11 +110,12 @@ fn beamform_df(preproc_data: &Array3<f64>, time: &Array1<f64>, xd: &Array1<f64>)
 
     println!("{:?}", oob_inds);
     
-    // let replacement_ind = (time.len() - 1) as usize;
-    // for oi in outbounds_inds.iter() {
-	// let mut slice = prop_dist_ind.slice_mut(s![oi.0, oi.1]);
-	// slice.assign(&replacement_ind);  // Clay, this is currently broken
-    // }
+    let replacement_ind = (time.len() - 1) as usize;
+    for oob_ind in oob_inds.iter() {
+	let mut slice = prop_dist_ind.slice_mut(s![oob_ind.0, oob_ind.1]);
+	println!("{:?}", slice);
+	// slice.assign(replacement_ind);
+    }
         
     let image = Array2::<f64>::zeros((N_PROBE_CHANNELS as usize, zd.len()));
     

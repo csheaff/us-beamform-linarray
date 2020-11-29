@@ -1,5 +1,5 @@
 [package]
-name = "pa-tom"
+name = "us-beamform-linarray"
 version = "0.1.0"
 authors = ["Clay Sheaff <claysheaff@protonmail.com>"]
 edition = "2018"
