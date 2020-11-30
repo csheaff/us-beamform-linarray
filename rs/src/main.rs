@@ -138,10 +138,47 @@ fn beamform_df(data: &Array3<f64>, time: &Array1<f64>, xd: &Array1<f64>) -> Arra
 }
 
 
+fn hilbert(waveform: Array1<f64>) -> Array1<f64> {
+//// Discrete-time analytic signal using Hilbert transform
+
+// The analytic signal for a sequence xr has a one-sided Fourier
+// transform. That is, the transform vanishes for negative
+// frequencies. To approximate the analytic signal, hilbert calculates
+// the FFT of the input sequence, replaces those FFT coefficients that
+// correspond to negative frequencies with zeros, and calculates the
+// inverse FFT of the result.
+
+// Hilbert uses a four-step algorithm:
+
+//1. Calculate the FFT of the input sequence, storing the result in a vector x.
+
+//2. Create a vector h whose elements h(i) have the values:
+
+//    - 1 for i = 1, (n/2)+1
+
+//    - 2 for i = 2, 3, ... , (n/2)
+
+//    - 0 for i = (n/2)+2, ... , n
+
+//3. Calculate the element-wise product of x and h.
+
+//4. Calculate the inverse FFT of the sequence obtained in step 3 and returns the first n elements of the result.
+
+
+
+
+}
+
+
 fn envel_detect(scanline: Array1<f64>) -> Array1<f64> {
 
  //TODO figure out how to implement Hilbert transform.
-// This looks like the best best: https://github.com/paulchernoch/hilbert
+    //  Unfortunately their isn't an off-the-shelf function for computing
+    // the magnitude of the analytic signal. However, the algorithm for this
+    // appears somewhat simple. see:
+    // https://www.mathworks.com/help/signal/ref/hilbert.html
+
+    
 
 
 }
