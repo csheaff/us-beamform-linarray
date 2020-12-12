@@ -1,5 +1,4 @@
 extern crate hdf5;
-
 extern crate basic_dsp;
 use basic_dsp::conv_types::*;
 use basic_dsp::*;
@@ -8,9 +7,9 @@ use ndarray::{prelude::*, stack, Zip};
 use ndarray_linalg::{norm::Norm, types::Scalar};
 use ndarray_stats::QuantileExt; // this adds basic stat methods to your arrays
 //use ndarray_stats::SummaryStatisticsExt;
-//use fftw::array::AlignedVec;
-//use fftw::plan::*;
-//use fftw::types::*;
+use fftw::array::AlignedVec;
+use fftw::plan::*;
+use fftw::types::*;
 //use num_integer::Roots;
 use std::f64::consts::PI;
 //use std::time::Instant;
@@ -27,6 +26,32 @@ const TRANSMIT_FOCAL_DEPTH: f64 = 20e-3;
 const ARRAY_PITCH: f64 = 2.0 * 1.8519e-4;
 const REC_LEN: u32 = 1585;
 const INTERP_FACT: u32 = 4;
+
+
+fn fft_priv(x: &Array1<c64>, n: usize, sign: Sign) -> Array1<c64> {
+    let mut xfft = AlignedVec::new(n);
+    let mut xs_aligned = AlignedVec::new(n);
+    for (x_aligned, &x) in xs_aligned.iter_mut().zip(x) {
+        *x_aligned = x;
+    }
+
+    let mut plan: C2CPlan64 = C2CPlan::aligned(&[n], sign, Flag::MEASURE).unwrap();
+
+    plan.c2c(&mut xs_aligned, &mut xfft).unwrap();
+    Array1::from(Vec::from(xfft.as_slice()))
+}
+
+fn fft(x: &Array1<c64>, n: usize) -> Array1<c64> {
+    // this is unnormalized, just like scipy.fftpack.fft
+
+    fft_priv(x, n, Sign::Forward)
+}
+
+fn ifft(x: &Array1<c64>) -> Array1<c64> {
+    // this will normalize, just like scipy.fftpack.ifft
+
+    fft_priv(x, x.len(), Sign::Backward) / c64::new(x.len() as f64, 0.0)
+}
 
 
 fn get_data(data_path: &str) -> Array3<f64> {
@@ -138,39 +163,38 @@ fn beamform_df(data: &Array3<f64>, time: &Array1<f64>, xd: &Array1<f64>) -> Arra
 }
 
 
-fn hilbert(waveform: Array1<f64>) -> Array1<f64> {
-//// Discrete-time analytic signal using Hilbert transform
+fn analytic(waveform: &Array1<f64>, nfft: usize) -> Array1<c64> {
+    //// Discrete-time analytic signal
 
-// The analytic signal for a sequence xr has a one-sided Fourier
-// transform. That is, the transform vanishes for negative
-// frequencies. To approximate the analytic signal, hilbert calculates
-// the FFT of the input sequence, replaces those FFT coefficients that
-// correspond to negative frequencies with zeros, and calculates the
-// inverse FFT of the result.
+    // This mimics scipy.signal.hilbert
 
-// Hilbert uses a four-step algorithm:
+    let waveform = waveform.mapv(|x| c64::new(x, 0.0)); // convert to complex
+    let waveform_fft = fft(&waveform, nfft);
 
-//1. Calculate the FFT of the input sequence, storing the result in a vector x.
+    // currently only working if nfft is even
+    let mut h1 = Array1::<f64>::ones(nfft);
+    let h2 = Array1::<f64>::ones(((nfft / 2) - 1) as usize) * 2.0;
+    let mut slice = h1.slice_mut(s![1..(nfft / 2)]);
+    slice.assign(&h2);
+    let h0 = Array1::<f64>::zeros((nfft / 2 - 1) as usize);
+    let mut slice = h1.slice_mut(s![(nfft / 2) + 1..]);
+    slice.assign(&h0);
+    
+    let analytic_fft = waveform_fft * h1.mapv(|x| c64::new(x, 0.0));
+    let analytic = ifft(&analytic_fft);
 
-//2. Create a vector h whose elements h(i) have the values:
-
-//    - 1 for i = 1, (n/2)+1
-
-//    - 2 for i = 2, 3, ... , (n/2)
-
-//    - 0 for i = (n/2)+2, ... , n
-
-//3. Calculate the element-wise product of x and h.
-
-//4. Calculate the inverse FFT of the sequence obtained in step 3 and returns the first n elements of the result.
-
-
-
-
+    analytic
 }
 
 
-fn envel_detect(scanline: Array1<f64>) -> Array1<f64> {
+fn envelope(waveform: &Array1<f64>) -> Array1<f64> {
+    let nfft = 2048;
+    let env = analytic(&waveform, nfft).mapv(|x| x.abs());
+    let env = env.slice(s![..waveform.len()]).to_owned();
+
+    env
+}
+
 
  //TODO figure out how to implement Hilbert transform.
     //  Unfortunately their isn't an off-the-shelf function for computing
@@ -181,39 +205,41 @@ fn envel_detect(scanline: Array1<f64>) -> Array1<f64> {
     
 
 
-}
+// }
 
 
-fn log_compress() {
+// fn log_compress() {
 
 
-}
+// }
 
 
-fn scan_convert() {
+// fn scan_convert() {
 
 
-}
+// }
 
 
 fn main() {
-    let data_path = "../example_us_bmode_sensor_data.h5";
-    let data = get_data(data_path);
-    let t = Array::range(0.0, REC_LEN as f64, 1.0) / SAMPLE_RATE - TIME_OFFSET;
-    let xd = Array::range(0.0, N_PROBE_CHANNELS as f64, 1.0) * ARRAY_PITCH;
-    let xd_max = *xd.max().unwrap();
-    let xd = xd - xd_max / 2.0;
+    // let data_path = "../example_us_bmode_sensor_data.h5";
+    // let data = get_data(data_path);
+    // let t = Array::range(0.0, REC_LEN as f64, 1.0) / SAMPLE_RATE - TIME_OFFSET;
+    // let xd = Array::range(0.0, N_PROBE_CHANNELS as f64, 1.0) * ARRAY_PITCH;
+    // let xd_max = *xd.max().unwrap();
+    // let xd = xd - xd_max / 2.0;
 
-    let (preproc_data, t_interp) = preproc(&data, &t, &xd);
+    // let (preproc_data, t_interp) = preproc(&data, &t, &xd);
 
-    let image = beamform_df(&preproc_data, &t_interp, &xd);
+    // let image = beamform_df(&preproc_data, &t_interp, &xd);
 
-    // println!("{:?}", image);
-
+    let x = array![0., 1., 2., 3., 4., 5., 4., 3., 2., 1., 0., -1., -2., -3., -4., -5., -4., -3., -2., -1., 0., 1., 2., 3., 4., 5., 4., 3., 2., 1., 0.];
+    let env = envelope(&x);
+    println!("{:?}", env);
 
     // TODO
     // envelope detection
     // log compression
     // scan conversion
+
 
 }
