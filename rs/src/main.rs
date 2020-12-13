@@ -15,6 +15,7 @@ use std::f64::consts::PI;
 //use std::time::Instant;
 use std::vec::Vec;
 use hdf5::File;
+use std::path::Path;
 
 const SAMPLE_RATE: f64 = 27.72e6;
 const TIME_OFFSET: f64 = 1.33e-6;
@@ -54,7 +55,7 @@ fn ifft(x: &Array1<c64>) -> Array1<c64> {
 }
 
 
-fn get_data(data_path: &str) -> Array3<f64> {
+fn get_data(data_path: &Path) -> Array3<f64> {
     let file = hdf5::File::open(data_path).unwrap();
     let data = file.dataset("dataset_1").unwrap();
     let data: Array3<f64> = data.read().unwrap();
@@ -195,23 +196,14 @@ fn envelope(waveform: &Array1<f64>) -> Array1<f64> {
     env
 }
 
-
- //TODO figure out how to implement Hilbert transform.
-    //  Unfortunately their isn't an off-the-shelf function for computing
-    // the magnitude of the analytic signal. However, the algorithm for this
-    // appears somewhat simple. see:
-    // https://www.mathworks.com/help/signal/ref/hilbert.html
-
+fn log_compress(data: &Array2<f64>, dr: f64) -> Array2<f64> {
     
+    let data_log = 20.0 * data.mapv(|x| x.abs().log10());
+    let data_log = data_log.mapv(|x| x.max(-dr));
+    let data_log = (data_log + dr) / dr;
 
-
-// }
-
-
-// fn log_compress() {
-
-
-// }
+    data_log
+}
 
 
 // fn scan_convert() {
@@ -220,26 +212,37 @@ fn envelope(waveform: &Array1<f64>) -> Array1<f64> {
 // }
 
 
+fn img_save(img: &Array2<f64>, img_save_path: &Path) {
+
+    let img = img.clone();
+    let img_max = *(img.max().unwrap());
+    let img = 255.0 * img / img_max;
+    let img = img.mapv(|x| x as u8);
+    let imgx = img.shape()[0] as u32;
+    let imgy = img.shape()[1] as u32;
+    let imgbuf = image::GrayImage::from_vec(imgx, imgy, img.into_raw_vec());
+    imgbuf.unwrap().save(img_save_path).unwrap();
+
+}
+
+
 fn main() {
-    // let data_path = "../example_us_bmode_sensor_data.h5";
-    // let data = get_data(data_path);
-    // let t = Array::range(0.0, REC_LEN as f64, 1.0) / SAMPLE_RATE - TIME_OFFSET;
-    // let xd = Array::range(0.0, N_PROBE_CHANNELS as f64, 1.0) * ARRAY_PITCH;
-    // let xd_max = *xd.max().unwrap();
-    // let xd = xd - xd_max / 2.0;
+    let data_path = Path::new("../example_us_bmode_sensor_data.h5");
+    let data = get_data(&data_path);
 
-    // let (preproc_data, t_interp) = preproc(&data, &t, &xd);
+    let t = Array::range(0.0, REC_LEN as f64, 1.0) / SAMPLE_RATE - TIME_OFFSET;
+    let xd = Array::range(0.0, N_PROBE_CHANNELS as f64, 1.0) * ARRAY_PITCH;
+    let xd_max = *xd.max().unwrap();
+    let xd = xd - xd_max / 2.0;
 
-    // let image = beamform_df(&preproc_data, &t_interp, &xd);
+    let (preproc_data, t_interp) = preproc(&data, &t, &xd);
 
-    let x = array![0., 1., 2., 3., 4., 5., 4., 3., 2., 1., 0., -1., -2., -3., -4., -5., -4., -3., -2., -1., 0., 1., 2., 3., 4., 5., 4., 3., 2., 1., 0.];
-    let env = envelope(&x);
-    println!("{:?}", env);
+    let img = beamform_df(&preproc_data, &t_interp, &xd);
 
-    // TODO
-    // envelope detection
-    // log compression
+    let img_log = log_compress(&img, 35.0);
+
+    let img_save_path = Path::new("./result.png");
+    img_save(&img_log, &img_save_path);
+
     // scan conversion
-
-
 }
