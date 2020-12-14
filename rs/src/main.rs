@@ -134,12 +134,12 @@ fn beamform_df(data: &Array3<f64>, time: &Array1<f64>, xd: &Array1<f64>) -> Arra
     }
     let sample_rate = SAMPLE_RATE * UPSAMP_FACT as f64;
     let mut prop_dist_ind = (prop_dist / SPEED_SOUND * sample_rate).mapv(|x| x.round() as usize);
-
+   
     // replace with last index (likely to be of low signal at that location i.e
     // closest to a null.
     // NOTE: oob_inds is currently empty because you haven't truncated
     //       the iterpolated time vector yet (it's not necessary until
-    //       after filtering.   
+    //       after filtering.
     let is_oob = prop_dist_ind.mapv(|x| x >= time.len());
     let oob_inds = where_2D(is_oob);
     let replacement_ind: Array1<usize> = array![(time.len() - 1)];
@@ -156,7 +156,7 @@ fn beamform_df(data: &Array3<f64>, time: &Array1<f64>, xd: &Array1<f64>) -> Arra
 	    let waveform = data.slice(s![n as usize, m as usize, ..]).into_owned();
 	    let inds = prop_dist_ind.slice(s![m as usize, ..]).into_owned();
 	    let waveform_indexed = array_indexing_1d(&waveform, &inds);
-	    scan_line += &waveform_indexed;
+	    scan_line = scan_line + waveform_indexed;
 	}
 	let mut image_slice = image.slice_mut(s![n as usize, ..]);
 	image_slice.assign(&scan_line);
@@ -199,8 +199,8 @@ fn envelope(waveform: &Array1<f64>) -> Array1<f64> {
 
 
 fn log_compress(data: &Array2<f64>, dr: f64) -> Array2<f64> {
-    
-    let data_log = 20.0 * data.mapv(|x| x.abs().log10());
+    let data_max = *(data.max().unwrap());
+    let data_log = 20.0 * data.mapv(|x| (x / data_max).log10());
     let data_log = data_log.mapv(|x| x.max(-dr));
     let data_log = (data_log + dr) / dr;
 
@@ -248,6 +248,7 @@ fn img_save(img: &Array2<f64>, img_save_path: &Path) {
     let img = img.mapv(|x| x as u8);
     let imgx = img.shape()[0] as u32;
     let imgy = img.shape()[1] as u32;
+    // let img = img.t().into_owned();
     let imgbuf = image::GrayImage::from_vec(imgx, imgy, img.into_raw_vec());
     imgbuf.unwrap().save(img_save_path).unwrap();
 
@@ -265,10 +266,9 @@ fn main() {
 
     let (preproc_data, t_interp) = preproc(&data, &t, &xd);
 
+    // let data_beamformed = beamform_df(&data, &t, &xd);
     let data_beamformed = beamform_df(&preproc_data, &t_interp, &xd); // SOMETHING WRONG WITH THIS
-
-    println!("{:?}", data_beamformed);
-
+    
     let mut img = Array2::<f64>::zeros(data_beamformed.raw_dim());
     for n in 0..N_TRANSMIT_BEAMS {
 	let a_line = data_beamformed.slice(s![n as usize, ..]).into_owned();
