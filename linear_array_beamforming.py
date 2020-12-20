@@ -1,3 +1,11 @@
+import logging
+logging.basicConfig(filename='python.log',
+                    # filemode='a',
+                    format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+                    datefmt='%H:%M:%S',
+                    level=logging.INFO)
+logger = logging.getLogger('python')
+
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy import signal
@@ -472,6 +480,8 @@ def main():
 
     # data get info
     record_length = sensor_data.shape[2]
+
+    logger.info(f'Record length = {record_length}')
 
     # time vector for data
     time = np.arange(record_length)/sample_rate - time_offset

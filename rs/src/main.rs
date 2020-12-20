@@ -136,9 +136,14 @@ fn beamform_df(data: &Array3<f64>, time: &Array1<f64>, xd: &Array1<f64>) -> Arra
 	let mut slice = prop_dist.slice_mut(s![r as usize, ..]);
 	slice.assign(&dist);
     }
+
+    info!("prop_dist = {:?}", prop_dist);
+
     let sample_rate = SAMPLE_RATE * UPSAMP_FACT as f64;
     let mut prop_dist_ind = (prop_dist / SPEED_SOUND * sample_rate).mapv(|x| x.round() as usize);
    
+    info!("prop_dist_ind = {:?}", &prop_dist_ind);
+
     // replace with last index (likely to be of low signal at that location i.e
     // closest to a null.
     // NOTE: oob_inds is currently empty because you haven't truncated
@@ -151,6 +156,8 @@ fn beamform_df(data: &Array3<f64>, time: &Array1<f64>, xd: &Array1<f64>) -> Arra
 	let mut slice = prop_dist_ind.slice_mut(s![oob_ind.0, oob_ind.1]);
 	slice.assign(&replacement_ind);
     }
+
+    info!("oob inds = {:?}", oob_inds);
     
     // beamform
     let mut image = Array2::<f64>::zeros((N_TRANSMIT_BEAMS as usize, zd.len()));
@@ -271,6 +278,7 @@ fn main() {
     let data = get_data(&data_path);
 
     info!("Data shape = {:?}", data.shape());
+    info!("Data = {:?}", data);
 
     let t = Array::range(0.0, REC_LEN as f64, 1.0) / SAMPLE_RATE - TIME_OFFSET;
     let xd = Array::range(0.0, N_PROBE_CHANNELS as f64, 1.0) * ARRAY_PITCH;
@@ -279,9 +287,15 @@ fn main() {
 
     let (preproc_data, t_interp) = preproc(&data, &t, &xd);
 
+    info!("Preprocess Data shape = {:?}", preproc_data.shape());
+    info!("Preprocess Data = {:?}", preproc_data);
+
     // let data_beamformed = beamform_df(&data, &t, &xd);
     let data_beamformed = beamform_df(&preproc_data, &t_interp, &xd); // SOMETHING WRONG WITH THIS
     
+    info!("Beamformed Data shape = {:?}", data_beamformed.shape());
+    info!("Beamformed Data = {:?}", data_beamformed);
+
     let mut img = Array2::<f64>::zeros(data_beamformed.raw_dim());
     for n in 0..N_TRANSMIT_BEAMS {
 	let a_line = data_beamformed.slice(s![n as usize, ..]).into_owned();
@@ -290,6 +304,9 @@ fn main() {
 	img_slice.assign(&env);
     }
 
+    info!("Envelope detected Data shape = {:?}", img.shape());
+    info!("Envelope Detected Data = {:?}", img);
+
     let img_log = log_compress(&img, 35.0);
 
     let zd = t * SPEED_SOUND / 2.0;
@@ -297,6 +314,5 @@ fn main() {
 
     let img_save_path = Path::new("./result.png");
     img_save(&img_sc, &img_save_path);
-
 
 }
