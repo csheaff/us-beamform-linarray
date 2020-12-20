@@ -1,3 +1,8 @@
+#[macro_use] extern crate log;
+extern crate simplelog;
+use simplelog::*;
+use std::fs::File;
+
 extern crate hdf5;
 extern crate basic_dsp;
 use basic_dsp::conv_types::*;
@@ -14,7 +19,6 @@ use fftw::types::*;
 use std::f64::consts::PI;
 //use std::time::Instant;
 use std::vec::Vec;
-use hdf5::File;
 use std::path::Path;
 
 const SAMPLE_RATE: f64 = 27.72e6;
@@ -256,8 +260,17 @@ fn img_save(img: &Array2<f64>, img_save_path: &Path) {
 
 
 fn main() {
+    CombinedLogger::init(
+        vec![
+            TermLogger::new(LevelFilter::Warn, Config::default(), TerminalMode::Mixed).unwrap(),
+            WriteLogger::new(LevelFilter::Info, Config::default(), File::create("binary.log").unwrap()),
+        ]
+    ).unwrap();
+
     let data_path = Path::new("../example_us_bmode_sensor_data.h5");
     let data = get_data(&data_path);
+
+    info!("Data shape = {:?}", data.shape());
 
     let t = Array::range(0.0, REC_LEN as f64, 1.0) / SAMPLE_RATE - TIME_OFFSET;
     let xd = Array::range(0.0, N_PROBE_CHANNELS as f64, 1.0) * ARRAY_PITCH;

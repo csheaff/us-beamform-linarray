@@ -18,7 +18,8 @@ fftw = { version = "0.6.0"}
 image = { version = "0.23.4"}
 hdf5 = { version = "0.6.1"}  # requires debian package libhdf5-dev
 basic_dsp = "*"
-
+log = "0.4"
+simplelog = "^0.7.6"
 
 [profile.release]
 debug = true
