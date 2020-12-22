@@ -1,10 +1,10 @@
 import logging
 logging.basicConfig(filename='python.log',
-                    # filemode='a',
+                    filemode='w',
                     format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
                     datefmt='%H:%M:%S',
                     level=logging.INFO)
-logger = logging.getLogger('python')
+logger = logging.getLogger()
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -296,6 +296,8 @@ def beamform_df(data, t, xd):
         dist2 = np.sqrt(xd[r]**2 + zd2)
         prop_dist[r, :] = dist1 + dist2
 
+    logger.info(f'Prop dist = {prop_dist[0, :]}')
+
     # convert distance to sampling index
     prop_dist_ind = np.round(prop_dist / speed_sound * sample_rate)
     prop_dist_ind = prop_dist_ind.astype('int')
@@ -306,7 +308,12 @@ def beamform_df(data, t, xd):
     # Replace these indices with last index of the waveform (likely to be of low signal 
     # at that location i.e closest to a null.
     oob_inds = np.where(prop_dist_ind >= len(t)) 
+
+    logger.info(f'oob inds = {oob_inds}')
+
     prop_dist_ind[oob_inds[0], oob_inds[1]] = len(t) - 1
+
+    logger.info(f'Prop dist inds = {prop_dist_ind[0, :]}')
 
     # perform beamforming
     image = np.zeros((n_transmit_beams, len(zd)))
@@ -477,11 +484,12 @@ def main():
 
     h5f = h5py.File('example_us_bmode_sensor_data.h5', 'r')
     sensor_data = h5f['dataset_1'][:]
+    
+    logger.info(f'Data shape = {sensor_data.shape}')
+    logger.info(f'Data = {sensor_data[0, 0, :]}')
 
     # data get info
     record_length = sensor_data.shape[2]
-
-    logger.info(f'Record length = {record_length}')
 
     # time vector for data
     time = np.arange(record_length)/sample_rate - time_offset
@@ -492,6 +500,9 @@ def main():
 
     # preprocessing - signal filtering, interpolation, and apodization
     preproc_data, time_shifted = preproc(sensor_data, time, xd)
+
+    logger.info(f'Preproc Data shape = {preproc_data.shape}')
+    logger.info(f'Preproc Data = {preproc_data[0, 0, :]}')
 
     # B-mode image w/o beamforming (only use waveform from central element)
     image = preproc_data[:, 15, :]
@@ -506,6 +517,10 @@ def main():
     # beamforming with dynamic focusing
     image_df = beamform_df(preproc_data, time_shifted, xd)
 
+    logger.info(f'Beamformed Data shape = {image_df.shape}')
+    logger.info(f'Beamformed Data = {image_df[0, :]}')
+    logger.info(f'Beamformed data sum = {np.sum(image_df[0, :])}')
+
     images = (image, image_bf1, image_bf2, image_df)
     z = time_shifted*speed_sound/2
 
@@ -515,9 +530,7 @@ def main():
 
     # post process all images generated
     images_proc = []
-    for r in range(len(images)):
-
-        im = images[r]
+    for n, im in enumerate(images):
 
         # define portion of image you want to display
         # includes nullifying beginning of image containing transmission pulse
@@ -530,6 +543,10 @@ def main():
         for n in range(n_transmit_beams):
             im_trunc[n, :] = envel_detect(im_trunc[n, :], 2*z_trunc/speed_sound,
                                      method='hilbert')
+
+        if n == 3:
+            logger.info(f'Envelope detected Data shape = {im_trunc.shape}')
+            logger.info(f'Envelop detected Data = {im_trunc[0, :]}')
 
         # log compression and scan conversion
         DR = 35   # dynamic range - units of dB
@@ -545,7 +562,9 @@ def main():
 
         images_proc.append(np.transpose(image_sc3))
 
-    plot(images_proc, x_sc, z_sc)
+    should_plot = False
+    if should_plot:
+        plot(images_proc, x_sc, z_sc)
 
 
 if __name__ == '__main__':

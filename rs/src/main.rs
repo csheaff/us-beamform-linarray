@@ -3,6 +3,8 @@ extern crate simplelog;
 use simplelog::*;
 use std::fs::File;
 
+use opencv::prelude::*;
+
 extern crate hdf5;
 extern crate basic_dsp;
 use basic_dsp::conv_types::*;
@@ -137,13 +139,11 @@ fn beamform_df(data: &Array3<f64>, time: &Array1<f64>, xd: &Array1<f64>) -> Arra
 	slice.assign(&dist);
     }
 
-    info!("prop_dist = {:?}", prop_dist);
+    info!("prop_dist = {:?}", prop_dist.slice(s![0, ..]));
 
     let sample_rate = SAMPLE_RATE * UPSAMP_FACT as f64;
     let mut prop_dist_ind = (prop_dist / SPEED_SOUND * sample_rate).mapv(|x| x.round() as usize);
    
-    info!("prop_dist_ind = {:?}", &prop_dist_ind);
-
     // replace with last index (likely to be of low signal at that location i.e
     // closest to a null.
     // NOTE: oob_inds is currently empty because you haven't truncated
@@ -151,13 +151,16 @@ fn beamform_df(data: &Array3<f64>, time: &Array1<f64>, xd: &Array1<f64>) -> Arra
     //       after filtering.
     let is_oob = prop_dist_ind.mapv(|x| x >= time.len());
     let oob_inds = where_2D(is_oob);
+
+    info!("oob inds = {:?}", oob_inds);
+
     let replacement_ind: Array1<usize> = array![(time.len() - 1)];
     for oob_ind in oob_inds.iter() {
 	let mut slice = prop_dist_ind.slice_mut(s![oob_ind.0, oob_ind.1]);
 	slice.assign(&replacement_ind);
     }
 
-    info!("oob inds = {:?}", oob_inds);
+    info!("prop_dist_ind = {:?}", prop_dist_ind.slice(s![0, ..]));
     
     // beamform
     let mut image = Array2::<f64>::zeros((N_TRANSMIT_BEAMS as usize, zd.len()));
@@ -226,6 +229,16 @@ fn scan_convert(img: &Array2<f64>, x: &Array1<f64>, z: &Array1<f64>)
     let img_decim = img.slice(s![.., ..;DECIM_FACT]).into_owned();
     let z_new = z.slice(s![..;DECIM_FACT]).into_owned();
     let x_new = x.clone();
+
+    // Clay, there doesn't seem to be a good library in Rust for 2-d interpolation.
+    // I think this is a good opportunity to try OpenCV bindings. You'll want to do:
+    //     cv2.remap(f,f2,x2,y2,CV_INTER_CUBIC)
+    // this is equivalent to:
+    //     interp2( x, y, f, x2, y2, 'bicubic' )
+    // https://stackoverflow.com/questions/19912234/cvremap-in-opencv-and-interp2-matlab
+
+    
+
     
     // make pixels square by interpolating in lateral dimension 
     // let dz_new = z_new[1] - z_new[0];
@@ -278,7 +291,7 @@ fn main() {
     let data = get_data(&data_path);
 
     info!("Data shape = {:?}", data.shape());
-    info!("Data = {:?}", data);
+    info!("Data = {:?}", data.slice(s![0, 0, ..]));
 
     let t = Array::range(0.0, REC_LEN as f64, 1.0) / SAMPLE_RATE - TIME_OFFSET;
     let xd = Array::range(0.0, N_PROBE_CHANNELS as f64, 1.0) * ARRAY_PITCH;
@@ -288,13 +301,15 @@ fn main() {
     let (preproc_data, t_interp) = preproc(&data, &t, &xd);
 
     info!("Preprocess Data shape = {:?}", preproc_data.shape());
-    info!("Preprocess Data = {:?}", preproc_data);
+    info!("Preprocess Data = {:?}", preproc_data.slice(s![0, 0, ..]));
 
     // let data_beamformed = beamform_df(&data, &t, &xd);
     let data_beamformed = beamform_df(&preproc_data, &t_interp, &xd); // SOMETHING WRONG WITH THIS
     
     info!("Beamformed Data shape = {:?}", data_beamformed.shape());
-    info!("Beamformed Data = {:?}", data_beamformed);
+    info!("Beamformed Data = {:?}", data_beamformed.slice(s![0, ..]));
+    let m = data_beamformed.slice(s![0, ..]).sum();
+    info!("Beamformed Data sum = {:?}", m);
 
     let mut img = Array2::<f64>::zeros(data_beamformed.raw_dim());
     for n in 0..N_TRANSMIT_BEAMS {
@@ -305,7 +320,7 @@ fn main() {
     }
 
     info!("Envelope detected Data shape = {:?}", img.shape());
-    info!("Envelope Detected Data = {:?}", img);
+    info!("Envelope Detected Data = {:?}", img.slice(s![0, ..]));
 
     let img_log = log_compress(&img, 35.0);
 

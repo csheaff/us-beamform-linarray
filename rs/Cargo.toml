@@ -20,6 +20,7 @@ hdf5 = { version = "0.6.1"}  # requires debian package libhdf5-dev
 basic_dsp = "*"
 log = "0.4"
 simplelog = "^0.7.6"
+opencv = {version = "0.46", default-features = false, features = ["opencv-4", "buildtime-bindgen", "contrib"]}
 
 [profile.release]
 debug = true
