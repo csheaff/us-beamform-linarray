@@ -320,7 +320,7 @@ def beamform_df(data, t, xd):
     for q in range(n_transmit_beams):  # index transmission (96 total)
         data_received = data[q, ...]
         scan_line = np.zeros(len(zd))
-        for r in range(n_probe_channels):  # index receiver (32 total)
+        for r in range(2): #range(n_probe_channels):  # index receiver (32 total)
             v = data_received[r, :]
             scan_line = scan_line + v[prop_dist_ind[r, :]]
         image[q, :] = scan_line

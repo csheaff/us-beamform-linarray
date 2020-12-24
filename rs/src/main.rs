@@ -23,6 +23,12 @@ use std::f64::consts::PI;
 use std::vec::Vec;
 use std::path::Path;
 
+use plotlib::page::Page;
+use plotlib::repr::Plot;
+use plotlib::view::ContinuousView;
+use plotlib::style::{PointMarker, PointStyle};
+
+
 const SAMPLE_RATE: f64 = 27.72e6;
 const TIME_OFFSET: f64 = 1.33e-6;
 const SPEED_SOUND: f64 = 1540.0;
@@ -34,6 +40,16 @@ const ARRAY_PITCH: f64 = 2.0 * 1.8519e-4;
 const REC_LEN: u32 = 1585;
 const UPSAMP_FACT: u32 = 4;
 const DECIM_FACT: u32 = 8;
+
+
+fn plotlib_zip(x: &Array1<f64>, y: &Array1<f64>) -> Vec<(f64, f64)> {
+    // recreate's python's zip() for two 1-d arrays, resulting in
+    // a vector that can be digested by plotlib's Plot::new()
+    let x = x.clone().into_raw_vec();
+    let y = y.clone().into_raw_vec();
+    let d: Vec<(f64, f64)> = x.into_iter().zip(y).collect();
+    d
+}
 
 
 fn fft_priv(x: &Array1<c64>, n: usize, sign: Sign) -> Array1<c64> {
@@ -166,7 +182,7 @@ fn beamform_df(data: &Array3<f64>, time: &Array1<f64>, xd: &Array1<f64>) -> Arra
     let mut image = Array2::<f64>::zeros((N_TRANSMIT_BEAMS as usize, zd.len()));
     for n in 0..N_TRANSMIT_BEAMS {
         let mut scan_line = Array1::<f64>::zeros(zd.len());
-	for m in 0..N_PROBE_CHANNELS {
+	for m in 0..2 {//N_PROBE_CHANNELS {
 	    let waveform = data.slice(s![n as usize, m as usize, ..]).into_owned();
 	    let inds = prop_dist_ind.slice(s![m as usize, ..]).into_owned();
 	    let waveform_indexed = array_indexing_1d(&waveform, &inds);
@@ -300,8 +316,28 @@ fn main() {
 
     let (preproc_data, t_interp) = preproc(&data, &t, &xd);
 
+    let preproc_ex = preproc_data.slice(s![0, 0, ..]).into_owned();
+    let xy = plotlib_zip(&t_interp, &preproc_ex);
+
+    let s1: Plot = Plot::new(xy).point_style(
+        PointStyle::new()
+            .marker(PointMarker::Square) // setting the marker to be a square
+            .colour("#DD3355"),
+    ); // and a custom colour
+
+    // The 'view' describes what set of data is drawn
+    let v = ContinuousView::new()
+        .add(s1)
+        // .x_range(-5., 10.)
+        // .y_range(-2., 6.)
+        .x_label("Some varying variable")
+        .y_label("The response of something");
+
+    // A page with a single view is then saved to an SVG file
+    Page::single(&v).save("./preproc_ex.svg").unwrap();
+
     info!("Preprocess Data shape = {:?}", preproc_data.shape());
-    info!("Preprocess Data = {:?}", preproc_data.slice(s![0, 0, ..]));
+    info!("Preprocess Data = {:?}", preproc_ex);
 
     // let data_beamformed = beamform_df(&data, &t, &xd);
     let data_beamformed = beamform_df(&preproc_data, &t_interp, &xd); // SOMETHING WRONG WITH THIS
