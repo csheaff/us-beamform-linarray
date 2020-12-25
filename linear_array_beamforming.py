@@ -200,10 +200,7 @@ def preproc(data, t, xd):
     # create new time vector based on interpolation and filter delay
     freqs, delay = signal.group_delay((B, 1))
     delay = int(delay[0]) * interp_fact
-    t2 = np.arange(record_length2) / sample_rate + t[0] - delay / sample_rate - time_offset
-
-    # something is off with the time vector here. If you plot (t, data) vs (t2, data_interp)
-    # it doesn't line up. you're not correcting the time vector right above.
+    t2 = np.arange(record_length2) / sample_rate + t[0] - delay / sample_rate
 
     # remove signal before t = 0
     f = np.where(t2 < 0)[0]
@@ -323,7 +320,7 @@ def beamform_df(data, t, xd):
     for q in range(n_transmit_beams):  # index transmission (96 total)
         data_received = data[q, ...]
         scan_line = np.zeros(len(zd))
-        for r in range(2): #range(n_probe_channels):  # index receiver (32 total)
+        for r in range(n_probe_channels):  # index receiver (32 total)
             v = data_received[r, :]
             scan_line = scan_line + v[prop_dist_ind[r, :]]
         image[q, :] = scan_line
@@ -480,7 +477,7 @@ def plot(images_proc, x_sc, z_sc):
     ax4.set_xlabel('x(mm)')
     ax4.set_title('Dynamic Focusing')
 
-    plt.show()
+    fig.savefig('./result.png')
 
 
 def main():
@@ -489,13 +486,12 @@ def main():
     sensor_data = h5f['dataset_1'][:]
     
     logger.info(f'Data shape = {sensor_data.shape}')
-    logger.info(f'Data = {sensor_data[0, 0, :]}')
 
     # data get info
     record_length = sensor_data.shape[2]
 
     # time vector for data
-    time = np.arange(record_length)/sample_rate - time_offset
+    time = np.arange(record_length) / sample_rate - time_offset
 
     # transducer locations relative to the a-line, which is always centered
     xd = np.arange(n_probe_channels) * array_pitch
@@ -504,8 +500,14 @@ def main():
     # preprocessing - signal filtering, interpolation, and apodization
     preproc_data, time_shifted = preproc(sensor_data, time, xd)
 
+    aline_ind = 15
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.plot(time, sensor_data[45, aline_ind, :])
+    ax.plot(time_shifted, preproc_data[45, aline_ind, :])
+    ax.set_ylim([-5000, 5000])
+    fig.savefig('./preproc.png', dpi=150)
+    
     logger.info(f'Preproc Data shape = {preproc_data.shape}')
-    logger.info(f'Preproc Data = {preproc_data[0, 0, :]}')
 
     # B-mode image w/o beamforming (only use waveform from central element)
     image = preproc_data[:, 15, :]
@@ -520,14 +522,7 @@ def main():
     # beamforming with dynamic focusing
     image_df = beamform_df(preproc_data, time_shifted, xd)
 
-    from importlib import reload
-    from IPython import embed
-    embed(colors='Linux')
-
-
-
     logger.info(f'Beamformed Data shape = {image_df.shape}')
-    logger.info(f'Beamformed Data = {image_df[0, :]}')
     logger.info(f'Beamformed data sum = {np.sum(image_df[0, :])}')
 
     images = (image, image_bf1, image_bf2, image_df)
@@ -540,7 +535,7 @@ def main():
     # post process all images generated
     images_proc = []
     for n, im in enumerate(images):
-
+        
         # define portion of image you want to display
         # includes nullifying beginning of image containing transmission pulse
 
@@ -549,19 +544,28 @@ def main():
         im_trunc = im[:, f[-1]+1:]
 
         # envelope detection
-        for n in range(n_transmit_beams):
-            im_trunc[n, :] = envel_detect(im_trunc[n, :], 2*z_trunc/speed_sound,
+        im_trunc_orig = im_trunc.copy()
+        for m in range(n_transmit_beams):
+            im_trunc[m, :] = envel_detect(im_trunc[m, :], 2*z_trunc/speed_sound,
                                      method='hilbert')
 
+
         if n == 3:
+            fig, ax = plt.subplots();
+            ax.plot(im_trunc_orig[aline_ind, :]); 
+            ax.plot(im_trunc[aline_ind, :]);
+            fig.savefig('./envelope.png')
             logger.info(f'Envelope detected Data shape = {im_trunc.shape}')
-            logger.info(f'Envelop detected Data = {im_trunc[0, :]}')
 
         # log compression and scan conversion
         DR = 35   # dynamic range - units of dB
         reject = 0   # rejection level - units of dB
         BG = 0   # brightness gain - units of dB
         image_log = log_compress(im_trunc, DR, reject, BG)
+
+        fig, ax = plt.subplots(); 
+        ax.plot(image_log[aline_ind, :])
+        fig.savefig('./img_log_slice.png')
 
         # convert to 512x512 image
         image_sc, z_sc, x_sc = scan_convert(image_log, xd2, z_trunc)
@@ -571,7 +575,7 @@ def main():
 
         images_proc.append(np.transpose(image_sc3))
 
-    should_plot = False
+    should_plot = True
     if should_plot:
         plot(images_proc, x_sc, z_sc)
 
