@@ -202,6 +202,9 @@ def preproc(data, t, xd):
     delay = int(delay[0]) * interp_fact
     t2 = np.arange(record_length2) / sample_rate + t[0] - delay / sample_rate - time_offset
 
+    # something is off with the time vector here. If you plot (t, data) vs (t2, data_interp)
+    # it doesn't line up. you're not correcting the time vector right above.
+
     # remove signal before t = 0
     f = np.where(t2 < 0)[0]
     t2 = np.delete(t2, f)
@@ -516,6 +519,12 @@ def main():
 
     # beamforming with dynamic focusing
     image_df = beamform_df(preproc_data, time_shifted, xd)
+
+    from importlib import reload
+    from IPython import embed
+    embed(colors='Linux')
+
+
 
     logger.info(f'Beamformed Data shape = {image_df.shape}')
     logger.info(f'Beamformed Data = {image_df[0, :]}')

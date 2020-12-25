@@ -26,7 +26,7 @@ use std::path::Path;
 use plotlib::page::Page;
 use plotlib::repr::Plot;
 use plotlib::view::ContinuousView;
-use plotlib::style::{PointMarker, PointStyle};
+use plotlib::style::LineStyle;
 
 
 const SAMPLE_RATE: f64 = 27.72e6;
@@ -110,7 +110,7 @@ fn preproc(data: &Array3<f64>, t: &Array1<f64>, xd: &Array1<f64>) -> (Array3<f64
 	    let mut dsp_vec = waveform.to_owned().into_raw_vec().to_real_time_vec();
 
 	    // interpolate - currently a bug(ish) requiring truncation. See https://github.com/liebharc/basic_dsp/issues/46
-	    dsp_vec.interpolatei(&mut buffer, &RaisedCosineFunction::new(0.35), UPSAMP_FACT).unwrap();
+	    dsp_vec.interpolatei(&mut buffer, &RaisedCosineFunction::new(0.1), UPSAMP_FACT).unwrap();
 	    let (mut dsp_vec_data, points) = dsp_vec.get();
 	    dsp_vec_data.truncate(points);	    
 	    // let vec: Vec<f64> = dsp_vec.into(); // This also works but, what if you still need to operate on dsp_vec?
@@ -121,8 +121,14 @@ fn preproc(data: &Array3<f64>, t: &Array1<f64>, xd: &Array1<f64>) -> (Array3<f64
 	}
     }
     let sample_rate = SAMPLE_RATE * UPSAMP_FACT as f64;
-    let t_interp = Array::range(0.0, rec_len_interp as f64, 1.0) / sample_rate - TIME_OFFSET;
-    (data_interp, t_interp)
+    let t_interp = Array::range(0.0, rec_len_interp as f64, 1.0) / sample_rate + t[0] - TIME_OFFSET;
+
+    // remove transmission pulse
+    let trunc_ind = 350 as usize;
+    let data_preproc = data_interp.slice(s![.., .., trunc_ind..]).into_owned();
+    let t_interp = t_interp.slice(s![trunc_ind..]).into_owned();
+
+    (data_preproc, t_interp)
 }
 
 
@@ -160,6 +166,8 @@ fn beamform_df(data: &Array3<f64>, time: &Array1<f64>, xd: &Array1<f64>) -> Arra
     let sample_rate = SAMPLE_RATE * UPSAMP_FACT as f64;
     let mut prop_dist_ind = (prop_dist / SPEED_SOUND * sample_rate).mapv(|x| x.round() as usize);
    
+    info!("prop_dist_ind = {:?}", prop_dist_ind);
+
     // replace with last index (likely to be of low signal at that location i.e
     // closest to a null.
     // NOTE: oob_inds is currently empty because you haven't truncated
@@ -170,10 +178,8 @@ fn beamform_df(data: &Array3<f64>, time: &Array1<f64>, xd: &Array1<f64>) -> Arra
 
     info!("oob inds = {:?}", oob_inds);
 
-    let replacement_ind: Array1<usize> = array![(time.len() - 1)];
     for oob_ind in oob_inds.iter() {
-	let mut slice = prop_dist_ind.slice_mut(s![oob_ind.0, oob_ind.1]);
-	slice.assign(&replacement_ind);
+	prop_dist_ind[[oob_ind.0, oob_ind.1]] = time.len() - 1;
     }
 
     info!("prop_dist_ind = {:?}", prop_dist_ind.slice(s![0, ..]));
@@ -182,7 +188,7 @@ fn beamform_df(data: &Array3<f64>, time: &Array1<f64>, xd: &Array1<f64>) -> Arra
     let mut image = Array2::<f64>::zeros((N_TRANSMIT_BEAMS as usize, zd.len()));
     for n in 0..N_TRANSMIT_BEAMS {
         let mut scan_line = Array1::<f64>::zeros(zd.len());
-	for m in 0..2 {//N_PROBE_CHANNELS {
+	for m in 0..N_PROBE_CHANNELS {
 	    let waveform = data.slice(s![n as usize, m as usize, ..]).into_owned();
 	    let inds = prop_dist_ind.slice(s![m as usize, ..]).into_owned();
 	    let waveform_indexed = array_indexing_1d(&waveform, &inds);
@@ -283,8 +289,7 @@ fn scan_convert(img: &Array2<f64>, x: &Array1<f64>, z: &Array1<f64>)
 fn img_save(img: &Array2<f64>, img_save_path: &Path) {
 
     let img = img.clone();
-    let img_max = *(img.max().unwrap());
-    let img = 255.0 * img / img_max;
+    let img = 255.0 * img;
     let img = img.mapv(|x| x as u8);
     let imgx = img.shape()[0] as u32;
     let imgy = img.shape()[1] as u32;
@@ -316,33 +321,28 @@ fn main() {
 
     let (preproc_data, t_interp) = preproc(&data, &t, &xd);
 
-    let preproc_ex = preproc_data.slice(s![0, 0, ..]).into_owned();
+
+    // plot and save pre-processed waveform
+    let preproc_ex = preproc_data.slice(s![45, 15, ..]).into_owned();
     let xy = plotlib_zip(&t_interp, &preproc_ex);
-
-    let s1: Plot = Plot::new(xy).point_style(
-        PointStyle::new()
-            .marker(PointMarker::Square) // setting the marker to be a square
-            .colour("#DD3355"),
-    ); // and a custom colour
-
-    // The 'view' describes what set of data is drawn
-    let v = ContinuousView::new()
-        .add(s1)
-        // .x_range(-5., 10.)
-        // .y_range(-2., 6.)
-        .x_label("Some varying variable")
-        .y_label("The response of something");
-
-    // A page with a single view is then saved to an SVG file
+    let s1: Plot = Plot::new(xy).line_style(LineStyle::new());
+    let v = ContinuousView::new().add(s1).x_label("Time (s)");
     Page::single(&v).save("./preproc_ex.svg").unwrap();
 
-    info!("Preprocess Data shape = {:?}", preproc_data.shape());
-    info!("Preprocess Data = {:?}", preproc_ex);
+    // info!("Preprocess Data shape = {:?}", preproc_data.shape());
+    // info!("Preprocess Data = {:?}", preproc_ex);
 
     // let data_beamformed = beamform_df(&data, &t, &xd);
     let data_beamformed = beamform_df(&preproc_data, &t_interp, &xd); // SOMETHING WRONG WITH THIS
     
     info!("Beamformed Data shape = {:?}", data_beamformed.shape());
+
+    let preproc_ex = data_beamformed.slice(s![45, ..]).into_owned();
+    let xy = plotlib_zip(&t_interp, &preproc_ex);
+    let s1: Plot = Plot::new(xy).line_style(LineStyle::new());
+    let v = ContinuousView::new().add(s1).x_label("Time (s)");
+    Page::single(&v).save("./beamformed_ex.svg").unwrap();
+
     info!("Beamformed Data = {:?}", data_beamformed.slice(s![0, ..]));
     let m = data_beamformed.slice(s![0, ..]).sum();
     info!("Beamformed Data sum = {:?}", m);
@@ -355,10 +355,27 @@ fn main() {
 	img_slice.assign(&env);
     }
 
+    let a_line = data_beamformed.slice(s![15, ..]).into_owned();
+    let env = envelope(&a_line);
+    let xy = plotlib_zip(&t_interp, &a_line);
+    let s1: Plot = Plot::new(xy).line_style(LineStyle::new());
+    let xy = plotlib_zip(&t_interp, &env);
+    let s2: Plot = Plot::new(xy).line_style(LineStyle::new());
+    let v = ContinuousView::new().add(s1).add(s2).x_label("Time (s)");
+    Page::single(&v).save("./envelope.svg").unwrap();
+
+
     info!("Envelope detected Data shape = {:?}", img.shape());
     info!("Envelope Detected Data = {:?}", img.slice(s![0, ..]));
 
     let img_log = log_compress(&img, 35.0);
+
+    let img_log_slice = img_log.slice(s![15, ..]).into_owned();
+    let xy = plotlib_zip(&t_interp, &img_log_slice);
+    let s1: Plot = Plot::new(xy).line_style(LineStyle::new());
+    let v = ContinuousView::new().add(s1).x_label("Time (s)");
+    Page::single(&v).save("./img_log_slice.svg").unwrap();
+
 
     let zd = t * SPEED_SOUND / 2.0;
     let (img_sc, x_sc, z_sc) = scan_convert(&img_log, &xd, &zd);
