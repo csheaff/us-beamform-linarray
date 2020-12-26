@@ -3,7 +3,7 @@ extern crate simplelog;
 use simplelog::*;
 use std::fs::File;
 
-use opencv::{core, imgproc::remap, prelude::*};
+use opencv::{imgproc::remap, imgcodecs, prelude::*};
 
 extern crate hdf5;
 extern crate basic_dsp;
@@ -235,12 +235,6 @@ fn log_compress(data: &Array2<f64>, dr: f64) -> Array2<f64> {
 }
 
 
-fn ndarray2mat_1d(x: &Array1<f64>) -> Mat {
-    let x = x.clone().into_raw_vec();
-    let mat = Mat::from_slice(&x).unwrap();
-    mat
-}
-
 fn ndarray2mat_2d(x: &Array2<f64>) -> Mat {
     // covert a 2-d ndarray to single channel Mat object
     let n_rows = x.shape()[0];
@@ -258,23 +252,27 @@ fn scan_convert(img: &Array2<f64>, x: &Array1<f64>, z: &Array1<f64>)
     let img_decim = img.slice(s![.., ..;DECIM_FACT]).into_owned();
     let z_new = z.slice(s![..;DECIM_FACT]).into_owned();
 
-    // Clay, there doesn't seem to be a good library in Rust for 2-d interpolation.
-    // I think this is a good opportunity to try OpenCV bindings. You'll want to do:
-    //     cv2.remap(f,f2,x2,y2,CV_INTER_CUBIC)
-    // this is equivalent to:
-    //     interp2( x, y, f, x2, y2, 'bicubic' )
-    // https://stackoverflow.com/questions/19912234/cvremap-in-opencv-and-interp2-matlab
+    // Where I am as of 12.26.2020:
+    // The following is an attempt to use opencv's remap function to perform
+    // 2d interpolation, as I'm not finding any rust libraries which can do it
+    // with a variety of interpolation methods.
+    // Of course, you must convert your inputs into proper datatypes before
+    // using the remap function, and this is where I'm stuck. I've managed
+    // to convert an Array2<f64> to Mat, but I'm not sure how to provide
+    // x/z/x_new/z_new coordinates. Do they need to be a vector of points
+    // objects? 
+    // I also don't have the constants imported correctly below, which are to
+    // be used with the reamp function.
+
+    // get new x vector which has same sampling period as z_new
     let dz_new = z_new[1] - z_new[0];
     let x_new = Array1::<f64>::range(x[0], x[x.len() - 1], dz_new);
 
-    // covert to opencv objects and run scan conversion
-    // let img_decim_cv: Mat = Mat::from(img_decim.into_raw_vec());
-    let img_decim = ndarray2mat_2d(&img_decim);
-    let x = ndarray2mat_1d(&x);
-    let z = ndarray2mat_1d(&z);
-    let x_new = ndarray2mat_1d(&x_new);
-    let z_new = ndarray2mat_1d(&z_new);
-    // remap(&img_decim, &img_sc, &x, &z_new, &x_new, &z, 'linear');
+    // covert interp inputs to opencv objects
+    let img_src = ndarray2mat_2d(&img_decim);
+    let mut img_dst = img_decim.clone();
+    
+    // remap(&img_src, &img_dst, (&x, &z_new), (&x_new, &z), INTER_CONSTANT, BORDER_CONSTANT, Scalar(0, 0));
 
     (img_decim, x.clone(), z_new)
 }
@@ -357,14 +355,14 @@ fn main() {
     let dr = 35.0;
     let img_log = log_compress(&img, dr);
 
-    // Demo of log compression
+    //  of log compression
     let img_log_slice = img_log.slice(s![aline_ind, ..]).into_owned();
     let xy = plotlib_zip(&zd, &img_log_slice);
     let s1: Plot = Plot::new(xy).line_style(LineStyle::new());
     let v = ContinuousView::new().add(s1).x_label("Depth (m)");
     Page::single(&v).save("./img_log_slice.svg").unwrap();
 
-
+    // Scan conversion
     let (img_sc, x_sc, z_sc) = scan_convert(&img_log, &xd, &zd);
 
     // Demo of log compression
@@ -376,5 +374,12 @@ fn main() {
 
     let img_save_path = Path::new("./result.png");
     img_save(&img_sc, &img_save_path);
-
+    
+    // TODO: finish scan conversion
+    // TODO?: replace basic_dsp interpolation with opencv remap, 1d version?
+    // TODO: decide on filtering
+    // TODO: time this script, putting the data in the logger. 
+    // TODO: run benchmarking (flamegraph? as with pa-tom?)
+    // TODO: optimize speed
+    // TODO: cleanup
 }
