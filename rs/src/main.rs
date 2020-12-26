@@ -3,7 +3,7 @@ extern crate simplelog;
 use simplelog::*;
 use std::fs::File;
 
-use opencv::prelude::*;
+use opencv::{core, imgproc::remap, prelude::*};
 
 extern crate hdf5;
 extern crate basic_dsp;
@@ -241,7 +241,6 @@ fn scan_convert(img: &Array2<f64>, x: &Array1<f64>, z: &Array1<f64>)
     // decimate in depth dimensions
     let img_decim = img.slice(s![.., ..;DECIM_FACT]).into_owned();
     let z_new = z.slice(s![..;DECIM_FACT]).into_owned();
-    let x_new = x.clone();
 
     // Clay, there doesn't seem to be a good library in Rust for 2-d interpolation.
     // I think this is a good opportunity to try OpenCV bindings. You'll want to do:
@@ -249,9 +248,23 @@ fn scan_convert(img: &Array2<f64>, x: &Array1<f64>, z: &Array1<f64>)
     // this is equivalent to:
     //     interp2( x, y, f, x2, y2, 'bicubic' )
     // https://stackoverflow.com/questions/19912234/cvremap-in-opencv-and-interp2-matlab
+    let dz_new = z_new[1] - z_new[0];
+    let x_new = Array1::<f64>::range(x[0], x[x.len() - 1], dz_new);
 
-    
-    (img_decim, x_new, z_new)
+    // covert to opencv objects and run scan conversion
+    // let img_decim_cv: Mat = Mat::from(img_decim.into_raw_vec());
+    let img_decim = img_decim.mapv(|x| x as f32);
+    let mat = Mat::from_slice_2d(&img_decim);
+    // let img_decim_cv = core::ToInputArray::input_array.
+
+// (img_decim.into_raw_vec());
+
+    // let x_cv: Mat = Mat::from(x.into_raw_vec());
+    // let x_new_cv: Mat = Mat::from(x_new.into_raw_vec());
+    // let z_cv: Mat = Mat::from(z.into_raw_vec());
+    // remap(&img_decim, &img_sc, &x, &z_new, &x_new, &z, CV_INTER_LINEAR);
+
+    (img_decim, x.clone(), z_new)
 }
 
 
