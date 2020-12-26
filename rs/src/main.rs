@@ -235,6 +235,22 @@ fn log_compress(data: &Array2<f64>, dr: f64) -> Array2<f64> {
 }
 
 
+fn ndarray2mat_1d(x: &Array1<f64>) -> Mat {
+    let x = x.clone().into_raw_vec();
+    let mat = Mat::from_slice(&x).unwrap();
+    mat
+}
+
+fn ndarray2mat_2d(x: &Array2<f64>) -> Mat {
+    // covert a 2-d ndarray to single channel Mat object
+    let n_rows = x.shape()[0];
+    let x = x.clone().into_raw_vec();
+    let mat = Mat::from_slice(&x).unwrap();
+    let mat = mat.reshape(1, n_rows as i32).unwrap();
+    mat
+}
+
+
 fn scan_convert(img: &Array2<f64>, x: &Array1<f64>, z: &Array1<f64>)
 		-> (Array2<f64>, Array1<f64>, Array1<f64>) {
 
@@ -253,16 +269,12 @@ fn scan_convert(img: &Array2<f64>, x: &Array1<f64>, z: &Array1<f64>)
 
     // covert to opencv objects and run scan conversion
     // let img_decim_cv: Mat = Mat::from(img_decim.into_raw_vec());
-    let img_decim = img_decim.mapv(|x| x as f32);
-    let mat = Mat::from_slice_2d(&img_decim);
-    // let img_decim_cv = core::ToInputArray::input_array.
-
-// (img_decim.into_raw_vec());
-
-    // let x_cv: Mat = Mat::from(x.into_raw_vec());
-    // let x_new_cv: Mat = Mat::from(x_new.into_raw_vec());
-    // let z_cv: Mat = Mat::from(z.into_raw_vec());
-    // remap(&img_decim, &img_sc, &x, &z_new, &x_new, &z, CV_INTER_LINEAR);
+    let img_decim = ndarray2mat_2d(&img_decim);
+    let x = ndarray2mat_1d(&x);
+    let z = ndarray2mat_1d(&z);
+    let x_new = ndarray2mat_1d(&x_new);
+    let z_new = ndarray2mat_1d(&z_new);
+    // remap(&img_decim, &img_sc, &x, &z_new, &x_new, &z, 'linear');
 
     (img_decim, x.clone(), z_new)
 }
