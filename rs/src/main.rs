@@ -3,7 +3,7 @@ extern crate simplelog;
 use simplelog::*;
 use std::fs::File;
 
-use opencv::{imgproc::remap, imgcodecs, prelude::*};
+use opencv::{imgproc::{self, remap}, imgcodecs, prelude::*};
 
 extern crate hdf5;
 extern crate basic_dsp;
@@ -260,9 +260,7 @@ fn scan_convert(img: &Array2<f64>, x: &Array1<f64>, z: &Array1<f64>)
     // using the remap function, and this is where I'm stuck. I've managed
     // to convert an Array2<f64> to Mat, but I'm not sure how to provide
     // x/z/x_new/z_new coordinates. Do they need to be a vector of points
-    // objects? 
-    // I also don't have the constants imported correctly below, which are to
-    // be used with the reamp function.
+    // objects? See ~/code/rs/opencv-test for work on this.
 
     // get new x vector which has same sampling period as z_new
     let dz_new = z_new[1] - z_new[0];
@@ -272,7 +270,16 @@ fn scan_convert(img: &Array2<f64>, x: &Array1<f64>, z: &Array1<f64>)
     let img_src = ndarray2mat_2d(&img_decim);
     let mut img_dst = img_decim.clone();
     
-    // remap(&img_src, &img_dst, (&x, &z_new), (&x_new, &z), INTER_CONSTANT, BORDER_CONSTANT, Scalar(0, 0));
+    remap(
+	&img_src,
+	&img_dst,
+	&x2,
+	&y2,
+	imgproc::INTER_LINEAR,
+	core::BORDER_CONSTANT,
+	core::Scalar::from(0.0),
+	);
+
 
     (img_decim, x.clone(), z_new)
 }
