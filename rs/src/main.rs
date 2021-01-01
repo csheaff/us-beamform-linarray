@@ -3,7 +3,14 @@ extern crate simplelog;
 use simplelog::*;
 use std::fs::File;
 
-use opencv::{imgproc::{self, remap}, imgcodecs, prelude::*};
+use opencv::{
+    core::{self, MatConstIterator, Point, Point2d, Rect, Size, Vec2d, Vec2b, Vec3d, Vec3f, Vec4w},
+    Error,
+    prelude::*,
+    Result,
+    types::{VectorOff64, VectorOfi32, VectorOfMat},
+    imgproc::{self, remap},
+};
 
 extern crate hdf5;
 extern crate basic_dsp;
@@ -235,6 +242,14 @@ fn log_compress(data: &Array2<f64>, dr: f64) -> Array2<f64> {
 }
 
 
+fn ndarray2mat_1d(x: &Array1<f32>) -> Mat {
+    // covert a 2-d ndarray to single channel Mat object
+    let x = x.clone().into_raw_vec();
+    let mat = Mat::from_slice(&x).unwrap();
+    mat
+}
+
+
 fn ndarray2mat_2d(x: &Array2<f64>) -> Mat {
     // covert a 2-d ndarray to single channel Mat object
     let n_rows = x.shape()[0];
@@ -242,6 +257,25 @@ fn ndarray2mat_2d(x: &Array2<f64>) -> Mat {
     let mat = Mat::from_slice(&x).unwrap();
     let mat = mat.reshape(1, n_rows as i32).unwrap();
     mat
+}
+
+
+fn meshgrid_2d(
+    x1: &Array1<f32>,
+    x2: &Array1<f32>,
+) -> (Array2<f32>, Array2<f32>) {
+    let mut xx = Array2::<f32>::zeros((x2.len(), x1.len()));
+    let mut yy = xx.clone();
+    let mut zz = xx.clone();
+    for m in 0..x2.len() {
+            let mut slice = xx.slice_mut(s![m, ..]);
+            slice.assign(&x1);
+    }
+    for m in 0..x1.len() {
+            let mut slice = yy.slice_mut(s![.., m]);
+            slice.assign(&x2);
+    }
+    (xx, yy)
 }
 
 
@@ -256,30 +290,43 @@ fn scan_convert(img: &Array2<f64>, x: &Array1<f64>, z: &Array1<f64>)
     // The following is an attempt to use opencv's remap function to perform
     // 2d interpolation, as I'm not finding any rust libraries which can do it
     // with a variety of interpolation methods.
-    // Of course, you must convert your inputs into proper datatypes before
-    // using the remap function, and this is where I'm stuck. I've managed
-    // to convert an Array2<f64> to Mat, but I'm not sure how to provide
-    // x/z/x_new/z_new coordinates. Do they need to be a vector of points
-    // objects? See ~/code/rs/opencv-test for work on this.
 
     // get new x vector which has same sampling period as z_new
     let dz_new = z_new[1] - z_new[0];
     let x_new = Array1::<f64>::range(x[0], x[x.len() - 1], dz_new);
 
-    // covert interp inputs to opencv objects
+    // covert interp input images to opencv objects
     let img_src = ndarray2mat_2d(&img_decim);
-    let mut img_dst = img_decim.clone();
-    
+    let mut img_dst = VectorOff64::new();
+
+    // get your coordinates to evaluate on. For now this just does a simple
+    // interp where the number of z points is cut in half.
+    let x2 = Array1::<f32>::range(0., x.len() as f32, 1.);
+    let z2 = Array1::<f32>::range(0., z_new.len() as f32, 2.);
+    let (x2, z2) = meshgrid_2d(&x2, &z2);
+    let x2 = x2.into_raw_vec(); // note this flattens the arrays, as desired for the interp func
+    let z2 = z2.into_raw_vec();
+    let x2 = Mat::from_slice(&x2).unwrap();
+    let z2 = Mat::from_slice(&z2).unwrap();
+
+    // note: this assumes:
+    //       i.e. x1 = [0., 1., 2., 0., 1., 2.];, y1 = [0., 0., 0., 1., 1., 1.];
+    // https://stackoverflow.com/questions/19912234/cvremap-in-opencv-and-interp2-matlab
     remap(
 	&img_src,
-	&img_dst,
+	&mut img_dst,
 	&x2,
-	&y2,
+	&z2,
 	imgproc::INTER_LINEAR,
-	core::BORDER_CONSTANT,
-	core::Scalar::from(0.0),
-	);
+	core::BORDER_REPLICATE,
+	core::Scalar::default(),
+	).unwrap();
 
+    //// Convert back into array
+    // let img_dst = Vec::from(img_dst);
+    // let n_rows = ?
+    // let n_cols = ?
+    // let img_dst = Array2::<f64>::from_shape_vec((n_rows, n_cols), img_dst);
 
     (img_decim, x.clone(), z_new)
 }
