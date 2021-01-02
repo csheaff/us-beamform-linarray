@@ -9,7 +9,7 @@ use opencv::{
     prelude::*,
     Result,
     types::{VectorOff64, VectorOfi32, VectorOfMat},
-    imgproc::{self, remap},
+    imgproc::{self, resize},
 };
 
 extern crate hdf5;
@@ -260,75 +260,38 @@ fn ndarray2mat_2d(x: &Array2<f64>) -> Mat {
 }
 
 
-fn meshgrid_2d(
-    x1: &Array1<f32>,
-    x2: &Array1<f32>,
-) -> (Array2<f32>, Array2<f32>) {
-    let mut xx = Array2::<f32>::zeros((x2.len(), x1.len()));
-    let mut yy = xx.clone();
-    let mut zz = xx.clone();
-    for m in 0..x2.len() {
-            let mut slice = xx.slice_mut(s![m, ..]);
-            slice.assign(&x1);
-    }
-    for m in 0..x1.len() {
-            let mut slice = yy.slice_mut(s![.., m]);
-            slice.assign(&x2);
-    }
-    (xx, yy)
-}
+fn resize_ndarray(img_src: &Array2<f64>, fx: f64, fy: f64) -> Array2<f64> {
+    // perform opencv's resize but using ndarray as input and output types
+    // note: Array2::shape yields (height, width), but Mat::size yields (width, height)
 
+    let n_rows_resize = (img_src.shape()[0] as f64 * fy) as i32;
+    let n_cols_resize = (img_src.shape()[1] as f64 * fx) as i32;
+
+    let img_src = ndarray2mat_2d(&img_src);
+    let mut img_dst = Mat::default().unwrap();
+    let size = Size::new(n_cols_resize, n_rows_resize);
+    resize(&img_src, &mut img_dst, size, 0., 0., imgproc::INTER_LINEAR).unwrap();
+
+    let img_dst = img_dst.data_typed::<f64>().unwrap().to_vec();
+    let img_dst = Array2::<f64>::from_shape_vec((n_rows_resize as usize, n_cols_resize as usize), img_dst).unwrap();
+
+    img_dst
+}
 
 fn scan_convert(img: &Array2<f64>, x: &Array1<f64>, z: &Array1<f64>)
 		-> (Array2<f64>, Array1<f64>, Array1<f64>) {
 
     // decimate in depth dimensions
     let img_decim = img.slice(s![.., ..;DECIM_FACT]).into_owned();
-    let z_new = z.slice(s![..;DECIM_FACT]).into_owned();
+    let z = z.slice(s![..;DECIM_FACT]).into_owned();
 
-    // Where I am as of 12.26.2020:
-    // The following is an attempt to use opencv's remap function to perform
-    // 2d interpolation, as I'm not finding any rust libraries which can do it
-    // with a variety of interpolation methods.
-
-    // get new x vector which has same sampling period as z_new
-    let dz_new = z_new[1] - z_new[0];
-    let x_new = Array1::<f64>::range(x[0], x[x.len() - 1], dz_new);
-
-    // covert interp input images to opencv objects
-    let img_src = ndarray2mat_2d(&img_decim);
-    let mut img_dst = VectorOff64::new();
-
-    // get your coordinates to evaluate on. For now this just does a simple
-    // interp where the number of z points is cut in half.
-    let x2 = Array1::<f32>::range(0., x.len() as f32, 1.);
-    let z2 = Array1::<f32>::range(0., z_new.len() as f32, 2.);
-    let (x2, z2) = meshgrid_2d(&x2, &z2);
-    let x2 = x2.into_raw_vec(); // note this flattens the arrays, as desired for the interp func
-    let z2 = z2.into_raw_vec();
-    let x2 = Mat::from_slice(&x2).unwrap();
-    let z2 = Mat::from_slice(&z2).unwrap();
-
-    // note: this assumes:
-    //       i.e. x1 = [0., 1., 2., 0., 1., 2.];, y1 = [0., 0., 0., 1., 1., 1.];
-    // https://stackoverflow.com/questions/19912234/cvremap-in-opencv-and-interp2-matlab
-    remap(
-	&img_src,
-	&mut img_dst,
-	&x2,
-	&z2,
-	imgproc::INTER_LINEAR,
-	core::BORDER_REPLICATE,
-	core::Scalar::default(),
-	).unwrap();
-
-    //// Convert back into array
-    // let img_dst = Vec::from(img_dst);
-    // let n_rows = ?
-    // let n_cols = ?
-    // let img_dst = Array2::<f64>::from_shape_vec((n_rows, n_cols), img_dst);
-
-    (img_decim, x.clone(), z_new)
+    // make pixels square by making dx = dz
+    let dz = z[1] - z[0];
+    let dx = x[1] - x[0];
+    let fx = dz / dx;
+    let img_sc = resize_ndarray(&img_decim, fx, 1.);
+    let x = Array1::range(x[0], x[x.len() - 1], dx);
+    (img_sc, x, z)
 }
 
 
