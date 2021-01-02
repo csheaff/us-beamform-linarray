@@ -482,7 +482,7 @@ def plot(images_proc, x_sc, z_sc):
 
 def main():
 
-    h5f = h5py.File('example_us_bmode_sensor_data.h5', 'r')
+    h5f = h5py.File('../example_us_bmode_sensor_data.h5', 'r')
     sensor_data = h5f['dataset_1'][:]
     
     logger.info(f'Data shape = {sensor_data.shape}')

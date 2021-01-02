@@ -93,13 +93,14 @@ fn get_data(data_path: &Path) -> Array3<f64> {
 
 
 fn preproc(data: &Array3<f64>, t: &Array1<f64>, xd: &Array1<f64>) -> (Array3<f64>, Array1<f64>) {
+    // Preprocessing. right now this only does upsampling/interpolation.
+    // TODO: filtering, apodization, replace interpolation b/c
+    //       it's slow
     let filt_ord = 201;
     let lc = 0.5e6;
     let uc = 2.5e6;
     let lc = lc / (SAMPLE_RATE / 2.0);
     let uc = uc / (SAMPLE_RATE / 2.0);
-
-    // TODO: Set up filter coefs and apod window
 
     let rec_len_interp = REC_LEN * UPSAMP_FACT;
     let mut data_interp = Array3::<f64>::zeros((
@@ -166,20 +167,11 @@ fn beamform_df(data: &Array3<f64>, time: &Array1<f64>, xd: &Array1<f64>) -> Arra
 	slice.assign(&dist);
     }
 
-    // info!("prop_dist = {:?}", prop_dist.slice(s![0, ..]));
-
     let sample_rate = SAMPLE_RATE * UPSAMP_FACT as f64;
-    let mut prop_dist_ind = (prop_dist / SPEED_SOUND * sample_rate).mapv(|x| x.round() as usize);
-    // prop_dist_ind.mapv(|x| x.min(time.len()));
-
-    // info!("prop_dist_ind = {:?}", prop_dist_ind);
-    let is_oob = prop_dist_ind.mapv(|x| x >= time.len());
-    let oob_inds = where_2D(is_oob);
-    // info!("oob inds = {:?}", oob_inds);
-    for oob_ind in oob_inds.iter() {
-	prop_dist_ind[[oob_ind.0, oob_ind.1]] = time.len() - 1;
-    }
-    // info!("prop_dist_ind = {:?}", prop_dist_ind.slice(s![0, ..]));
+    let prop_dist_ind = (prop_dist / SPEED_SOUND * sample_rate).mapv(|x| x.round() as usize);
+    
+    // replace out-of-bounds indices
+    let prop_dist_ind = prop_dist_ind.mapv(|x| x.min(time.len() - 1));
 
     // beamform
     let mut image = Array2::<f64>::zeros((N_TRANSMIT_BEAMS as usize, zd.len()));
@@ -199,8 +191,7 @@ fn beamform_df(data: &Array3<f64>, time: &Array1<f64>, xd: &Array1<f64>) -> Arra
 
 
 fn analytic(waveform: &Array1<f64>, nfft: usize) -> Array1<c64> {
-    //// Discrete-time analytic signal
-
+    // Discrete-time analytic signal
     // This mimics scipy.signal.hilbert
 
     let waveform = waveform.mapv(|x| c64::new(x, 0.0)); // convert to complex
@@ -238,6 +229,7 @@ fn log_compress(data: &Array2<f64>, dr: f64) -> Array2<f64> {
     let data_log = (data_log + dr) / dr;
     data_log
 }
+
 
 fn ndarray2mat_2d(x: &Array2<f64>) -> Mat {
     // covert a 2-d ndarray to single channel Mat object
@@ -281,8 +273,7 @@ fn scan_convert(img: &Array2<f64>, x: &Array1<f64>, z: &Array1<f64>)
     let dz = z_sc[1] - z_sc[0];
     let dx = x[1] - x[0];
     let img_sc = resize_ndarray(&img_decim, 1., dx / dz);
-    let img_width = N_TRANSMIT_BEAMS as f64 * dx;
-    let x_sc = Array1::<f64>::range(0., img_width - dz, dz);
+    let x_sc = Array1::<f64>::linspace(x[0], x[x.len() - 1], img_sc.shape()[0]);
 
     (img_sc, x_sc, z_sc)
 }
@@ -298,6 +289,7 @@ fn transpose(a: Array2<f64>) -> Array2<f64> {
 
 
 fn img_save(img: &Array2<f64>, img_save_path: &Path) {
+    // save grayscale image from Array2
     let img = img.clone();
     let img = 255.0 * img;
     let img = img.mapv(|x| x as u8);
@@ -319,31 +311,39 @@ fn logger_init(filename: &str) {
 
 
 fn main() {
-
+    // logger and timer init
     let before = Instant::now();
     logger_init("binary.log");
 
+    // data loading
     let data_path = Path::new("../example_us_bmode_sensor_data.h5");
     let data = get_data(&data_path);
 
     info!("Data shape = {:?}", data.shape());
 
-    let t = Array::range(0.0, REC_LEN as f64, 1.0) / SAMPLE_RATE - TIME_OFFSET;
-    let xd = Array::range(0.0, N_PROBE_CHANNELS as f64, 1.0) * ARRAY_PITCH;
+    let t = Array::range(0., REC_LEN as f64, 1.) / SAMPLE_RATE - TIME_OFFSET;
+    let xd = Array::range(0., N_PROBE_CHANNELS as f64, 1.) * ARRAY_PITCH;
     let xd_max = *xd.max().unwrap();
-    let xd = xd - xd_max / 2.0;
+    let xd = xd - xd_max / 2.;
 
+    // preprocessing
     let (preproc_data, t_interp) = preproc(&data, &t, &xd);
-    let zd = &t_interp * SPEED_SOUND / 2.0;
+    let zd = &t_interp * SPEED_SOUND / 2.;
 
     info!("Preprocess Data shape = {:?}", preproc_data.shape());
 
+    // beamforming
     let data_beamformed = beamform_df(&preproc_data, &t_interp, &xd);
-
     info!("Beamformed Data shape = {:?}", data_beamformed.shape());
     let m = data_beamformed.slice(s![0, ..]).sum();
     info!("Beamformed Data sum = {:?}", m);
 
+    // lateral locations of beamformed a-lines
+    let xd2 = Array1::<f64>::range(0., N_TRANSMIT_BEAMS as f64, 1.) * ARRAY_PITCH;
+    let xd2_max = *xd.max().unwrap();
+    let xd2 = xd2 - xd2_max / 2.;
+
+    // envelope detection
     let mut img = Array2::<f64>::zeros(data_beamformed.raw_dim());
     for n in 0..N_TRANSMIT_BEAMS {
 	let a_line = data_beamformed.slice(s![n as usize, ..]).into_owned();
@@ -351,23 +351,25 @@ fn main() {
 	let mut img_slice = img.slice_mut(s![n as usize, ..]);
 	img_slice.assign(&env);
     }
-
     info!("Envelope detected Data shape = {:?}", img.shape());
 
+    // log compression
     let dr = 35.0;
     let img_log = log_compress(&img, dr);
 
-    let (img_sc, x_sc, z_sc) = scan_convert(&img_log, &xd, &zd);
-
+    // scan conversion
+    let (img_sc, x_sc, z_sc) = scan_convert(&img_log, &xd2, &zd);
     info!("Length of z vector after scan conversion {:?}", z_sc.len());
     info!("Length of x vector after scan conversion {:?}", x_sc.len());
     info!("Scan converted imape shape = {:?}", img_sc.shape());
 
+    // image save
     let img_save_path = Path::new("./result.png");
     let img_sc = transpose(img_sc);
     img_save(&img_sc, &img_save_path);
-
-    let should_plot_steps = false;
+    
+    // optional plotting of intermediate steps
+    let should_plot_steps = true;
     if should_plot_steps {
 
 	// A-line vs pre-processed A-line
@@ -402,8 +404,7 @@ fn main() {
 
     info!("Elapsed time: {:.2?} s", before.elapsed());
 
-    // TODO: decide on filtering
-    // TODO: run benchmarking (flamegraph? as with pa-tom?)
-    // TODO: optimize speed
-    // TODO: cleanup
+    // TODO: filtering
+    // TODO: replace basic_dsp interpolation (very slow)
+
 }
