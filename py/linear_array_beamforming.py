@@ -469,6 +469,7 @@ def plot(images_proc, x_sc, z_sc):
     ax4.set_xlabel('x(mm)')
     ax4.set_title('Dynamic Focusing')
 
+    plt.tight_layout()
     fig.savefig('./result.png')
 
 
