@@ -17,7 +17,7 @@ This program requires `numpy`, `scipy`, `matplotlib`, and `h5py`.
 
 The available signal and image processing libraries written in pure Rust are in their infancy at the time of this writing, so this script makes use of C++ libraries such as [`fftw`](https://github.com/rust-math/fftw) and [`opencv`](https://github.com/twistedfall/opencv-rust). The script is centered around [`ndarray`](https://github.com/rust-ndarray/ndarray) and incorporates logging ([`simplelog`](https://github.com/Drakulix/simplelog.rs)) and plot creation/saving ([`plotlib`](https://github.com/milliams/plotlib)) for the checking of intermediate outputs.
 
-Currently a beamformed image is produced with dynamic focusing, albeit without signal filtering and a slow upsampling step.
+Currently a beamformed image is produced with dynamic focusing, albeit with a slow upsampling step and no signal filtering.
 
 ### Prerequisites
 
