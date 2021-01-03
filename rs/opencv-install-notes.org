@@ -107,7 +107,7 @@ opencv = {version = "0.46", default-features = false, features = ["opencv-4", "b
 
 #+end_src
 
-And try this is =main.rs=
+And try this in =main.rs=
 
 #+begin_src rs
 
@@ -116,7 +116,3 @@ use opencv::prelude::*;
 #+end_src
 
 Now run =cargo build=.
-
-Possible error:
-
-#+BEGIN_QUOTE
