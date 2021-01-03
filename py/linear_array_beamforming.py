@@ -173,7 +173,6 @@ def preproc(data, t, xd):
         data_amp[m, :, :] = data[m, :, :]*tgc
 
     # retrieve filter coefficients
-
     filt_ord = 201
     lc, hc = 0.5e6, 2.5e6
     lc = lc/(sample_rate/2)  # normalize to nyquist frequency
@@ -296,8 +295,6 @@ def beamform_df(data, t, xd):
         dist2 = np.sqrt(xd[r]**2 + zd2)
         prop_dist[r, :] = dist1 + dist2
 
-    logger.info(f'Prop dist = {prop_dist[0, :]}')
-
     # convert distance to sampling index
     prop_dist_ind = np.round(prop_dist / speed_sound * sample_rate)
     prop_dist_ind = prop_dist_ind.astype('int')
@@ -308,12 +305,7 @@ def beamform_df(data, t, xd):
     # Replace these indices with last index of the waveform (likely to be of low signal 
     # at that location i.e closest to a null.
     oob_inds = np.where(prop_dist_ind >= len(t)) 
-
-    logger.info(f'oob inds = {oob_inds}')
-
     prop_dist_ind[oob_inds[0], oob_inds[1]] = len(t) - 1
-
-    logger.info(f'Prop dist inds = {prop_dist_ind[0, :]}')
 
     # perform beamforming
     image = np.zeros((n_transmit_beams, len(zd)))
@@ -499,16 +491,17 @@ def main():
 
     # preprocessing - signal filtering, interpolation, and apodization
     preproc_data, time_shifted = preproc(sensor_data, time, xd)
-
-    aline_ind = 15
-    fig, ax = plt.subplots(figsize=(8, 6))
-    ax.plot(time, sensor_data[45, aline_ind, :])
-    ax.plot(time_shifted, preproc_data[45, aline_ind, :])
-    ax.set_ylim([-5000, 5000])
-    fig.savefig('./preproc.png', dpi=150)
     
     logger.info(f'Preproc Data shape = {preproc_data.shape}')
-
+    plot_steps = True
+    if plot_steps:
+        aline_ind = 15
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.plot(time, sensor_data[45, aline_ind, :])
+        ax.plot(time_shifted, preproc_data[45, aline_ind, :])
+        ax.set_ylim([-5000, 5000])
+        fig.savefig('./preproc.png', dpi=150)
+ 
     # B-mode image w/o beamforming (only use waveform from central element)
     image = preproc_data[:, 15, :]
 
@@ -529,7 +522,7 @@ def main():
     z = time_shifted*speed_sound/2
 
     # lateral locations of beamformed a-lines
-    xd2 = np.arange(n_transmit_beams)*array_pitch
+    xd2 = np.arange(n_transmit_beams) * array_pitch
     xd2 = xd2 - np.max(xd2)/2
 
     # post process all images generated
@@ -538,7 +531,6 @@ def main():
         
         # define portion of image you want to display
         # includes nullifying beginning of image containing transmission pulse
-
         f = np.where(z < 5e-3)[0]
         z_trunc = np.delete(z, f)
         im_trunc = im[:, f[-1]+1:]
@@ -549,36 +541,36 @@ def main():
             im_trunc[m, :] = envel_detect(im_trunc[m, :], 2*z_trunc/speed_sound,
                                      method='hilbert')
 
-
-        if n == 3:
-            fig, ax = plt.subplots();
-            ax.plot(im_trunc_orig[aline_ind, :]); 
-            ax.plot(im_trunc[aline_ind, :]);
-            fig.savefig('./envelope.png')
-            logger.info(f'Envelope detected Data shape = {im_trunc.shape}')
-
         # log compression and scan conversion
         DR = 35   # dynamic range - units of dB
         reject = 0   # rejection level - units of dB
         BG = 0   # brightness gain - units of dB
         image_log = log_compress(im_trunc, DR, reject, BG)
 
-        fig, ax = plt.subplots(); 
-        ax.plot(image_log[aline_ind, :])
-        fig.savefig('./img_log_slice.png')
-
         # convert to 512x512 image
         image_sc, z_sc, x_sc = scan_convert(image_log, xd2, z_trunc)
 
+        if n == 3:
+            if plot_steps:
+                # plot some intermediate steps for the beamformed image
+                # plot some intermediate steps          
+                fig, ax = plt.subplots();
+                ax.plot(im_trunc_orig[aline_ind, :]);
+                ax.plot(im_trunc[aline_ind, :]);
+                fig.savefig('./envelope.png')
+                logger.info(f'Envelope detected Data shape = {im_trunc.shape}')
+
+                fig, ax = plt.subplots(); 
+                ax.plot(image_log[aline_ind, :])
+                fig.savefig('./img_log_slice.png')
+            logger.info(f'Scan converted Data shape = {image_sc.shape}')
+
         image_sc2 = np.round(255*image_sc/DR)  # convert to 8-bit grayscale
         image_sc3 = image_sc2.astype('int')
-
         images_proc.append(np.transpose(image_sc3))
 
-    should_plot = True
-    if should_plot:
-        plot(images_proc, x_sc, z_sc)
+    plot(images_proc, x_sc, z_sc)
 
-
+        
 if __name__ == '__main__':
     main()

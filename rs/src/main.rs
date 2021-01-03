@@ -313,7 +313,7 @@ fn logger_init(filename: &str) {
 fn main() {
     // logger and timer init
     let before = Instant::now();
-    logger_init("binary.log");
+    logger_init("rust.log");
 
     // data loading
     let data_path = Path::new("../example_us_bmode_sensor_data.h5");

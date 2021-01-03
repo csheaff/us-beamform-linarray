@@ -151,4 +151,4 @@ perf.data*
 # pics
 *.svg
 *.png
-# !result.png
+!result.png
